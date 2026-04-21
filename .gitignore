@@ -1,0 +1,39 @@
+# Raw source data (too large for GitHub / Streamlit Cloud)
+data/raw/
+# Dataset completo pós-ingestão (~600 MB; distribuído via Drive).
+# A amostra usada em runtime fica em data/processed_sample/ (commitada).
+data/processed/
+# CENSO bruto (402 MB) — runtime usa CENSO_simplified.parquet
+data/geo/CENSO.json
+# Relatório QA é regerável com `python pipeline/qa_aggregates.py`
+data/aggregates/_qa_report.md
+*.xlsx
+*.xls
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Logs
+*.log
+pipeline.log
+
+# Backups / cópias manuais do Windows
+* - Copia.*
+*- Copia.*
+*_backup.*
+*.bak

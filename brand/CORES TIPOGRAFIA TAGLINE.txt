@@ -1,0 +1,36 @@
+GUIA DE CORES
+COR				HEXCODE		USO RECOMENDADO
+Azul Profundo (fundo)		#0C2B4E		Fundo principal para cabeçalhos e seções de destaque.
+Verde Vibrante (Destaque)	#29A645		Botões de call-to-action (CTA), links e elementos gráficos de destaque.
+Branco (Texto)			#FFFFFF		Texto principal e elementos de contraste sobre o fundo azul profundo.
+Preto(Texto Secundário)		#000000		Texto secundário e títulos de seções sobre fundos claros.
+
+"Como Usar Estas Cores:
+
+Consistência: Use estas cores em todos os materiais de marketing, site e apresentações.
+
+Hierarquia: Use o Azul Profundo para os elementos mais importantes, o Verde Vibrante para os elementos que precisam de destaque e o Branco para o texto principal.
+
+Leitura: Certifique-se de que o texto seja legível em todos os fundos. Use o texto branco sobre o fundo azul profundo e o texto preto sobre fundos claros."		
+
+_________________________________________________________________________________________________________________________________________________
+
+TIPOGRAFIA
+
+Cor				Hex Code	Uso Recomendado
+Azul Profundo (Fundo)		#0C2B4E		Fundo principal para cabeçalhos e seções de destaque.
+Verde Vibrante (Destaque)	#29A645		Botões de call-to-action (CTA), links e elementos gráficos de destaque.
+Branco (Texto)			#FFFFFF		Texto principal e elementos de contraste sobre o fundo azul profundoo.
+Preto (Texto Secundário)	#000000		Texto secundário e títulos de seções sobre fundos claros.
+
+"Como Usar Estas Cores:
+
+Consistência: Use estas cores em todos os materiais de marketing, site e apresentações.
+
+Hierarquia: Use o Azul Profundo para os elementos mais importantes, o Verde Vibrante para os elementos que precisam de destaque e o Branco para o texto principal.
+
+Leitura: Certifique-se de que o texto seja legível em todos os fundos. Use o texto branco sobre o fundo azul profundo e o texto preto sobre fundos claros."	
+_________________________________________________________________________________________________________________________________________________
+
+TAGLINE
+"Inteligência Artificial aplicada à geociência do crime."

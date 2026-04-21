@@ -1,0 +1,15 @@
+# Identidade visual — InsightGeoLab AI
+name: "InsightGeoLab AI"
+tagline: "Inteligência Artificial aplicada à geociência do crime."
+subtagline: "Transformando dados em decisões inteligentes."
+
+# Paleta oficial
+primary_color:    "#0C2B4E"   # Azul Profundo (fundo principal / títulos)
+accent_color:     "#29A645"   # Verde Vibrante (CTA / destaques)
+background_color: "#FFFFFF"   # Branco
+text_color:       "#000000"   # Preto
+on_primary_color: "#FFFFFF"   # Texto sobre fundo azul
+
+font: "Source Sans Pro, Helvetica Neue, Arial, sans-serif"
+
+logo_path: "InsideGeoLab_logo.PNG"
