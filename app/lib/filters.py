@@ -10,13 +10,15 @@ import streamlit as st
 from . import data
 
 
+# Município (~645 polígonos) e Setor Censitário (~250k polígonos) foram
+# removidos da UI em produção: o coropletico com 250k polígonos estoura o
+# limite de ~1 GB RAM do Streamlit Cloud. Para destravar localmente, basta
+# re-adicionar os itens nesta lista.
 RECORTES = [
-    "Município",
-    "Setor Censitário",
+    "Comando (CPA)",     # default — recorte mais enxuto (~39 polígonos)
+    "Delegacia (DP)",
     "Batalhão PMESP",
     "Companhia PMESP",
-    "Comando (CPA)",
-    "Delegacia (DP)",
 ]
 
 
@@ -41,8 +43,12 @@ def sidebar_filters(default_naturezas: Optional[list[str]] = None) -> GlobalFilt
 
     anos = data.anos_disponiveis()
     if anos:
+        # Default: últimos 2 anos (≈12-24 meses, dependendo do mês corrente).
+        # Escopo inicial enxuto melhora tempo de resposta e uso de RAM.
+        # O usuário pode expandir pelo slider.
+        default_ini = max(min(anos), max(anos) - 1)
         ano_ini, ano_fim = st.sidebar.select_slider(
-            "Período (ano)", options=anos, value=(min(anos), max(anos)),
+            "Período (ano)", options=anos, value=(default_ini, max(anos)),
         )
     else:
         ano_ini, ano_fim = 2022, 2026
