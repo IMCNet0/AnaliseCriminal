@@ -159,7 +159,29 @@ def _bootstrap_defaults() -> tuple[date, date]:
     return di, df_
 
 
+def _echo_session_state() -> None:
+    """Workaround do multipage Streamlit: reassinala chaves de widget.
+
+    O problema: quando a mesma `key=` é usada em páginas diferentes, o
+    Streamlit marca internamente o valor como "widget state" e o **descarta**
+    no rerun da página seguinte se a widget ainda não foi chamada. Resultado
+    prático: ao trocar de página, os filtros voltam ao default.
+
+    O fix canônico é auto-atribuir a chave no topo de cada página antes de
+    qualquer widget — isso "promove" o valor de widget-state para user-state
+    e o Streamlit passa a preservá-lo. Ver docs 1.28+:
+    https://docs.streamlit.io/library/advanced-features/widget-behavior
+    """
+    for k in (SS_DATA_INI, SS_DATA_FIM, SS_NATUREZAS, SS_RECORTE):
+        if k in st.session_state:
+            st.session_state[k] = st.session_state[k]
+
+
 def sidebar_filters(default_naturezas: Optional[list[str]] = None) -> GlobalFilters:
+    # Precisa vir ANTES de qualquer widget desta função — senão o echo é tarde
+    # demais e o valor já foi descartado pelo Streamlit.
+    _echo_session_state()
+
     st.sidebar.markdown("## Filtros")
 
     # --- Default inicial = ÚLTIMO MÊS com dado disponível ------------------
@@ -213,5 +235,5 @@ def sidebar_footer() -> None:
     """Rodapé da sidebar (divisor + créditos). Chamado depois dos controles
     específicos da página pra ficar sempre na parte inferior."""
     st.sidebar.markdown("---")
-    st.sidebar.caption("Fonte: SSP-SP · IBGE · PMESP")
-    st.sidebar.caption("InsightGeoLab AI")
+    st.sidebar.caption("Fonte: SSP-SP · IBGE")
+    st.sidebar.caption("Desenvolvido por InsightGeoLab AI")

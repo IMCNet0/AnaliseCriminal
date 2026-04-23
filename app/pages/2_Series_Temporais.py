@@ -75,13 +75,46 @@ with c1:
         serie_top["NATUREZA_APURADA"] = pd.Categorical(
             serie_top["NATUREZA_APURADA"], categories=top5, ordered=True,
         )
-        fig = px.line(
-            serie_top, x="DATA", y="N", color="NATUREZA_APURADA",
-            color_discrete_sequence=px.colors.qualitative.Set2,
-            labels={"DATA": "Mês", "N": "Ocorrências",
-                    "NATUREZA_APURADA": "Indicador"},
-            markers=True,
-        )
+
+        n_meses = serie_top["DATA"].nunique()
+        if n_meses <= 1:
+            # Com 1 único mês, plotly não renderiza linha (precisa de ≥2 pontos
+            # no eixo X). Mostramos barras comparativas + aviso sobre ampliar
+            # o período. Esse caso é comum agora que o default é "último mês
+            # com dado" (rodada abr/2026).
+            st.info(
+                "📅 O período filtrado contém **apenas 1 mês** — linhas "
+                "temporais precisam de pelo menos 2 meses para renderizar. "
+                "Mostrando comparativo em barras; amplie o período na "
+                "sidebar para ver a evolução como linha."
+            )
+            fig = px.bar(
+                serie_top, x="NATUREZA_APURADA", y="N",
+                color="NATUREZA_APURADA",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+                labels={"NATUREZA_APURADA": "Indicador", "N": "Ocorrências"},
+                text="N",
+            )
+            fig.update_traces(texttemplate="%{text:,}", textposition="outside")
+            fig.update_layout(showlegend=False)
+        else:
+            fig = px.line(
+                serie_top, x="DATA", y="N", color="NATUREZA_APURADA",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+                labels={"DATA": "Mês", "N": "Ocorrências",
+                        "NATUREZA_APURADA": "Indicador"},
+                markers=True,
+            )
+            # Garante linhas visíveis mesmo quando uma natureza tem gaps
+            # intermitentes. `connectgaps=True` une pontos descontínuos;
+            # `mode="lines+markers"` torna explícito o que px.line já deveria
+            # fazer por default (bug ocasional com categoricals).
+            fig.update_traces(
+                mode="lines+markers",
+                connectgaps=True,
+                line=dict(width=2.5),
+                marker=dict(size=7),
+            )
         fig.update_layout(
             height=420, margin=dict(l=10, r=10, t=10, b=10),
             yaxis_title="Ocorrências", xaxis_title=None,
@@ -215,49 +248,92 @@ else:
     if mhd_f.empty:
         st.warning("Sem dados na matriz após aplicar os filtros.")
     else:
-        # Ordens canônicas para os eixos.
-        DIAS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
-        FAIXAS = ["Madrugada", "Manhã", "Tarde", "Noite"]
+        # Ordens canônicas (mesmos rótulos gerados pelo pipeline).
+        DIAS = [
+            "1.DOMINGO", "2.SEGUNDA-FEIRA", "3.TERÇA-FEIRA",
+            "4.QUARTA-FEIRA", "5.QUINTA-FEIRA", "6.SEXTA-FEIRA", "7.SÁBADO",
+        ]
+        FAIXAS = [
+            "00:00", "00:01–06:00", "06:01–12:00", "12:01–18:00", "18:01–23:59",
+        ]
 
-        pivot = (
-            mhd_f.groupby(["DIA_SEMANA", "FAIXA_HORA"], observed=True)["N"].sum()
+        # Pivot em contagem bruta (FAIXA em linha, DIA em coluna — espelha o
+        # layout pedido pelo cliente, que inverte a matriz anterior).
+        pivot_cnt = (
+            mhd_f.groupby(["FAIXA_HORA", "DIA_SEMANA"], observed=True)["N"].sum()
             .reset_index()
-            .pivot(index="DIA_SEMANA", columns="FAIXA_HORA", values="N")
-            .reindex(index=DIAS, columns=FAIXAS)
+            .pivot(index="FAIXA_HORA", columns="DIA_SEMANA", values="N")
+            .reindex(index=FAIXAS, columns=DIAS)
             .fillna(0).astype(int)
         )
 
+        # Normalização para percentual sobre o GRAND TOTAL da matriz
+        # (soma de todas as células) — é o que a imagem de referência traz.
+        total = int(pivot_cnt.values.sum())
+        if total == 0:
+            st.warning("Sem dados na matriz após aplicar os filtros.")
+            st.stop()
+        pivot_pct = (pivot_cnt / total * 100.0).round(2)
+
+        # Totais marginais (linha e coluna) em %.
+        total_por_faixa = pivot_pct.sum(axis=1).round(2)
+        total_por_dia   = pivot_pct.sum(axis=0).round(2)
+
+        # Heatmap com valores exibidos como "0,03%".
+        # Passamos `text` explicitamente pra formatar com vírgula decimal.
+        texto_pct = pivot_pct.map(
+            lambda v: f"{v:.2f}%".replace(".", ",")
+        ).values
         fig_hm = px.imshow(
-            pivot.values,
-            x=list(pivot.columns), y=list(pivot.index),
+            pivot_pct.values,
+            x=list(pivot_pct.columns), y=list(pivot_pct.index),
             color_continuous_scale="YlOrRd",
-            aspect="auto", text_auto=",d",
-            labels=dict(x="Faixa do dia", y="Dia da semana", color="Ocorrências"),
+            aspect="auto",
+            labels=dict(x="Dia da semana", y="Faixa de hora", color="% do total"),
+        )
+        fig_hm.update_traces(
+            text=texto_pct,
+            texttemplate="%{text}",
+            hovertemplate=(
+                "Dia: %{x}<br>Faixa: %{y}<br>"
+                "Participação: %{text}<extra></extra>"
+            ),
         )
         fig_hm.update_layout(
             height=420, margin=dict(l=10, r=10, t=10, b=10),
-            coloraxis_colorbar=dict(title="Ocorr."),
+            coloraxis_colorbar=dict(title="%"),
         )
-        fig_hm.update_xaxes(side="top")
+        fig_hm.update_xaxes(side="top", tickangle=0)
         st.plotly_chart(fig_hm, use_container_width=True)
 
-        # Tabela detalhada por DESC_PERIODO (facetada).
-        with st.expander("Matriz por Descrição do Período (tabela detalhada)"):
+        # Tabela formatada igual ao mock: faixa em linha, dia em coluna,
+        # última coluna "Total" por faixa e última linha "Total" por dia.
+        with st.expander("Tabela de percentuais (linha + coluna Total)", expanded=True):
+            tabela = pivot_pct.copy()
+            tabela["Total"] = total_por_faixa
+            tabela.loc["Total"] = list(total_por_dia) + [round(total_por_faixa.sum(), 2)]
+            # Formata tudo como string "X,XX%"
+            tabela_fmt = tabela.map(lambda v: f"{v:.2f}%".replace(".", ","))
+            st.dataframe(tabela_fmt, use_container_width=True)
+
+        # Tabela detalhada por DESC_PERIODO (mantida pra análise mais funda).
+        with st.expander("Matriz por Descrição do Período (contagens brutas)"):
             facet = (
-                mhd_f.groupby(["DESC_PERIODO", "DIA_SEMANA", "FAIXA_HORA"],
+                mhd_f.groupby(["DESC_PERIODO", "FAIXA_HORA", "DIA_SEMANA"],
                               observed=True)["N"].sum().reset_index()
             )
             facet["DIA_SEMANA"] = pd.Categorical(facet["DIA_SEMANA"], DIAS, ordered=True)
             facet["FAIXA_HORA"] = pd.Categorical(facet["FAIXA_HORA"], FAIXAS, ordered=True)
-            facet = facet.sort_values(["DESC_PERIODO", "DIA_SEMANA", "FAIXA_HORA"])
+            facet = facet.sort_values(["DESC_PERIODO", "FAIXA_HORA", "DIA_SEMANA"])
             st.dataframe(facet, use_container_width=True)
 
         download_buttons(
-            pivot.reset_index(),
-            basename="matriz_hora_dia",
+            pivot_pct.reset_index(),
+            basename="matriz_hora_dia_pct",
             meta={
                 "data_inicio": str(f.data_ini), "data_fim": str(f.data_fim),
                 "naturezas": ", ".join(f.naturezas) if f.naturezas else "todas",
                 "periodos_desc": ", ".join(sel_periodos) if sel_periodos else "todos",
+                "total_ocorrencias_base": str(total),
             },
         )

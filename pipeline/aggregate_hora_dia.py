@@ -1,18 +1,24 @@
 """Agregado auxiliar: matriz temática Dia da Semana × Faixa Hora × DESC_PERIODO.
 
 Gera ``data/aggregates/matriz_hora_dia.parquet`` a partir do dataset bruto
-particionado em ``data/processed/sp_dados_criminais``. Esse agregado
-alimenta a página "Séries Temporais" do portal.
+particionado em ``data/processed/sp_dados_criminais``. Alimenta a página
+"Séries Temporais" do portal (heatmap com dias em coluna / faixas em linha).
 
 Chaves: ANO · MES · NATUREZA_APURADA · DIA_SEMANA · FAIXA_HORA · DESC_PERIODO · N
 
 Faixas de hora (derivadas de ``HORA_OCORRENCIA_BO``, "HH:MM"):
-  • 00-05  → Madrugada
-  • 06-11  → Manhã
-  • 12-17  → Tarde
-  • 18-23  → Noite
+  • 00:00              → rótulo "00:00"              (≈ 0,4% · geralmente falta
+    de hora declarada pela vítima — fica isolado pra não poluir as demais)
+  • 00:01 às 06:00     → rótulo "00:01–06:00"
+  • 06:01 às 12:00     → rótulo "06:01–12:00"
+  • 12:01 às 18:00     → rótulo "12:01–18:00"
+  • 18:01 às 23:59     → rótulo "18:01–23:59"
 
-Dia da semana extraído de ``DATA_OCORRENCIA_BO`` (pt-BR: Seg…Dom).
+O binning é feito em MINUTOS do dia (HH*60+MM) pra preservar exatamente
+a regra "início exclusivo, fim inclusivo" de 6 em 6 horas.
+
+Dia da semana extraído de ``DATA_OCORRENCIA_BO`` em formato "N.NOME" por
+extenso pt-BR (ex.: ``1.DOMINGO``) — casa com o mock do cliente.
 
 Rode DEPOIS de ``run_all.py`` — ele depende do dataset já ingerido.
 """
@@ -28,31 +34,62 @@ from common import PROCESSED, AGGREGATES, setup_logging
 
 log = logging.getLogger(__name__)
 
-DIAS_PT = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+# Ordem isoweek: 0=Seg … 6=Dom. Usamos rótulos "N.NOME" pt-BR com o DOMINGO
+# numerado como 1 (convenção comercial do cliente), o que inverte a
+# numeração natural do weekday do pandas. O mapa abaixo faz a conversão.
+DIAS_PT = {
+    0: "2.SEGUNDA-FEIRA",
+    1: "3.TERÇA-FEIRA",
+    2: "4.QUARTA-FEIRA",
+    3: "5.QUINTA-FEIRA",
+    4: "6.SEXTA-FEIRA",
+    5: "7.SÁBADO",
+    6: "1.DOMINGO",
+}
+
+# Ordem canônica pros eixos / pivots no app.
+DIAS_ORDEM = [
+    "1.DOMINGO", "2.SEGUNDA-FEIRA", "3.TERÇA-FEIRA",
+    "4.QUARTA-FEIRA", "5.QUINTA-FEIRA", "6.SEXTA-FEIRA", "7.SÁBADO",
+]
+FAIXAS_ORDEM = [
+    "00:00", "00:01–06:00", "06:01–12:00", "12:01–18:00", "18:01–23:59",
+]
 
 
 def _faixa_from_hora(s: pd.Series) -> pd.Series:
-    """HORA_OCORRENCIA_BO costuma vir como "HH:MM" (string). Convertemos
-    pro inteiro da hora (0..23) e mapeamos para Madrugada/Manhã/Tarde/Noite.
-    Valores inválidos viram ``NaN`` e são descartados no groupby.
+    """Converte ``HORA_OCORRENCIA_BO`` ("HH:MM" string) em faixa rotulada.
+
+    Regra: convertemos para minutos desde meia-noite (0..1439) e aplicamos
+    ``pd.cut`` com bordas ``[-1, 0, 360, 720, 1080, 1439]`` (right=True).
+    A borda em 0 isola a categoria "00:00" das demais.
+
+    Valores inválidos (None, fora de 0..1439, texto não-numérico) saem como
+    ``NaN`` e são descartados no groupby.
     """
-    s = s.astype("string")
-    # Pega os 2 primeiros dígitos "HH:MM" → HH. Cobre também "H:MM" (→ H).
-    h = s.str.extract(r"^\s*(\d{1,2})", expand=False)
-    h = pd.to_numeric(h, errors="coerce")
-    # Valores plausíveis 0..23
-    h = h.where((h >= 0) & (h <= 23))
+    s = s.astype("string").str.strip()
+    # Extrai "HH" e "MM" independentemente (aceita "H:M", "HH:MM", "HH:MM:SS"…).
+    parts = s.str.extract(r"^\s*(\d{1,2})\s*:\s*(\d{1,2})")
+    hh = pd.to_numeric(parts[0], errors="coerce")
+    mm = pd.to_numeric(parts[1], errors="coerce")
+    # Validação: 0 ≤ HH ≤ 23, 0 ≤ MM ≤ 59
+    hh = hh.where((hh >= 0) & (hh <= 23))
+    mm = mm.where((mm >= 0) & (mm <= 59))
+    mins = hh * 60 + mm
     bins = pd.cut(
-        h, bins=[-1, 5, 11, 17, 23],
-        labels=["Madrugada", "Manhã", "Tarde", "Noite"],
+        mins,
+        bins=[-1, 0, 360, 720, 1080, 1439],
+        labels=FAIXAS_ORDEM,
+        right=True,
     )
     return bins.astype("string")
 
 
 def _dia_from_data(s: pd.Series) -> pd.Series:
+    """Extrai o dia da semana em formato "N.NOME" (pt-BR) da data."""
     d = pd.to_datetime(s, errors="coerce")
-    wd = d.dt.weekday   # 0=Seg, 6=Dom
-    return wd.map({i: DIAS_PT[i] for i in range(7)}).astype("string")
+    wd = d.dt.weekday  # 0=Seg, 6=Dom
+    return wd.map(DIAS_PT).astype("string")
 
 
 def load_base() -> pd.DataFrame:

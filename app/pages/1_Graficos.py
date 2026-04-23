@@ -193,21 +193,24 @@ st.plotly_chart(fig, use_container_width=True)
 
 
 # =========================================================================
-# 3) Top 20 naturezas — barras horizontais empilhadas, ORDENADAS do MAIOR
-#    para o menor; legenda SEQUENCIAL por ANO (período).
+# 3) Top 20 naturezas — barras horizontais empilhadas, ORDENADAS do MENOR
+#    para o MAIOR (pedido do cliente rodada abr/26 #2); legenda SEQUENCIAL
+#    por ANO do período.
 # =========================================================================
 st.subheader("Naturezas mais registradas no período selecionado")
 top_totais = (
     serie_f.groupby("NATUREZA_APURADA", as_index=False)["N"].sum()
-    .sort_values("N", ascending=False).head(20)
+    .sort_values("N", ascending=False).head(20)  # Top-20 pelos MAIORES volumes
 )
 top_ano = (
     serie_f[serie_f["NATUREZA_APURADA"].isin(top_totais["NATUREZA_APURADA"])]
     .groupby(["NATUREZA_APURADA", "ANO"], as_index=False, observed=True)["N"].sum()
 )
 
-# (a) Ordem do eixo Y: maior → menor (barra mais comprida no topo).
-order_nat = top_totais["NATUREZA_APURADA"].tolist()
+# (a) Ordem do eixo Y: MENOR → MAIOR (invertido desta rodada). Combinado com
+# `autorange="reversed"` mais abaixo, isso coloca a MENOR barra no TOPO da
+# figura e a MAIOR no FUNDO — forma de pirâmide crescente do olho pro fim.
+order_nat = top_totais["NATUREZA_APURADA"][::-1].tolist()  # reverse: menor 1º
 top_ano["NATUREZA_APURADA"] = pd.Categorical(
     top_ano["NATUREZA_APURADA"], categories=order_nat, ordered=True,
 )

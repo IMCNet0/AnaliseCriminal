@@ -31,7 +31,7 @@ import streamlit as st
 
 import folium
 from folium.features import DivIcon
-from folium.plugins import HeatMap
+from folium.plugins import HeatMap, Draw
 from branca.element import MacroElement, Template
 
 
@@ -555,6 +555,7 @@ def build_map(
     endereco_marker: Optional[tuple[float, float, str]] = None,
     points_min_zoom: int = 6,
     fit_bounds: Optional[tuple[float, float, float, float]] = None,
+    with_draw_tools: bool = False,
 ) -> folium.Map:
     """Constrói o mapa único usado na Home.
 
@@ -616,6 +617,25 @@ def build_map(
             icon=folium.Icon(color="green", icon="search"),
         ).add_to(fmap)
 
+    # --- Ferramenta laço (polígono / retângulo / círculo) --------------
+    # Plugin Leaflet.Draw: permite ao usuário desenhar uma forma livre no
+    # mapa. A geometria sai em ``ret['last_active_drawing']`` pelo st_folium
+    # e é usada em downstream pra filtro point-in-polygon (shapely).
+    if with_draw_tools:
+        Draw(
+            export=False,
+            position="topleft",
+            draw_options={
+                "polyline": False,           # linha não seleciona área
+                "circlemarker": False,        # sem circle markers (sem raio)
+                "polygon": {"allowIntersection": False, "showArea": True},
+                "rectangle": {"shapeOptions": {"color": "#c8102e"}},
+                "circle": {"shapeOptions": {"color": "#c8102e"}},
+                "marker": False,
+            },
+            edit_options={"edit": True, "remove": True},
+        ).add_to(fmap)
+
     folium.LayerControl(collapsed=False, position="topright").add_to(fmap)
 
     # --- fit_bounds (opcional) — enquadra polígono/feature de interesse ---
@@ -629,6 +649,80 @@ def build_map(
             pass
 
     return fmap
+
+
+def points_in_drawing(
+    pts: pd.DataFrame,
+    drawing: Optional[dict],
+    lat_col: str = "LATITUDE",
+    lon_col: str = "LONGITUDE",
+) -> pd.DataFrame:
+    """Filtra ``pts`` pras linhas cujas coordenadas caem dentro da forma
+    desenhada no mapa (polígono, retângulo ou círculo).
+
+    ``drawing`` é um GeoJSON Feature retornado por st_folium em
+    ``ret["last_active_drawing"]``. A geometria pode ser:
+
+    - ``Polygon`` / ``Rectangle`` → convertemos direto em ``shapely.Polygon``.
+    - ``Circle`` (no Leaflet.Draw vira uma Feature com Point na geometria e
+      raio em metros nas properties) → expandimos pra um círculo aproximado
+      via buffer em coordenadas locais (ver nota abaixo).
+
+    Retorna ``pts`` vazio se a forma for inválida, ou o subset em ordem
+    original. Fica silencioso em exceções (no máximo devolve o df inteiro
+    sem filtro) pra não quebrar a Home quando o laço for malformado.
+    """
+    if drawing is None or pts is None or pts.empty:
+        return pts.iloc[0:0] if pts is not None else pd.DataFrame()
+
+    try:
+        from shapely.geometry import shape, Point
+        from shapely.geometry.polygon import Polygon
+    except Exception:
+        # shapely indisponível (não deveria, faz parte do stack geo) —
+        # devolve vazio pra o chamador exibir um aviso.
+        return pts.iloc[0:0]
+
+    geom_dict = drawing.get("geometry") if isinstance(drawing, dict) else None
+    props = drawing.get("properties") if isinstance(drawing, dict) else None
+    if not geom_dict:
+        return pts.iloc[0:0]
+
+    try:
+        # Caso especial: leaflet-draw representa Circle como Feature Point +
+        # property "radius" (metros). Shapely não tem círculo nativo — usamos
+        # comparação por distância em graus equivalentes.
+        if (geom_dict.get("type") == "Point"
+                and isinstance(props, dict) and "radius" in props):
+            lon_c, lat_c = geom_dict["coordinates"]
+            r_m = float(props["radius"])
+            # Converte raio em METROS → GRAUS aproximados (latitude de SP:
+            # 1° latitude ≈ 111.32 km; longitude varia com cos(lat)).
+            import math
+            r_lat = r_m / 111_320.0
+            r_lon = r_m / (111_320.0 * math.cos(math.radians(float(lat_c))))
+            # Filtro elíptico (aproximação decente para raios ≤ dezenas de km).
+            dlat = pts[lat_col].astype(float) - float(lat_c)
+            dlon = pts[lon_col].astype(float) - float(lon_c)
+            mask = ((dlat / r_lat) ** 2 + (dlon / r_lon) ** 2) <= 1.0
+            return pts.loc[mask].copy()
+
+        poly = shape(geom_dict)
+        if not isinstance(poly, Polygon):
+            return pts.iloc[0:0]
+
+        # vectorizado via prepared geometry pra acelerar pra 50k pontos
+        from shapely.prepared import prep
+        prepared = prep(poly)
+        mask = pts.apply(
+            lambda r: prepared.contains(Point(
+                float(r[lon_col]), float(r[lat_col]),
+            )),
+            axis=1,
+        )
+        return pts.loc[mask].copy()
+    except Exception:
+        return pts.iloc[0:0]
 
 
 def legenda_pontos_html(colors: dict[str, str]) -> str:

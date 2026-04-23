@@ -27,6 +27,7 @@ from lib.map_builder import (
     build_map, PointsData, ChoroplethData,
     geocode_many,
     legenda_unificada_html, _points_color_map,
+    points_in_drawing,
 )
 
 
@@ -215,18 +216,38 @@ if tem_natureza and MODE in ("pontos", "hotspot"):
     )
 
     pts_data = PointsData(df=pts, periodo_label=periodo_label)
+
+    # Total REAL (sem amostragem) vindo dos agregados — pra explicar o gap
+    # entre o que o mapa mostra (amostra) e a contagem oficial SSP.
+    total_real = int(serie_f["N"].sum())
+
     info_col = st.columns(1)[0]
     if not pts.empty:
+        amostra_pct = (len(pts) / total_real * 100.0) if total_real else 0.0
         if MODE == "pontos":
             info_col.caption(
-                f"📍 {len(pts):,} ponto(s) carregado(s) em {periodo_label} — "
-                f"{pts['NATUREZA_APURADA'].nunique()} indicador(es). "
-                f"Visíveis a partir do zoom 6."
+                f"📍 {len(pts):,} ponto(s) exibido(s) em {periodo_label} — "
+                f"**amostra** representativa de **{total_real:,}** ocorrências "
+                f"oficiais (≈ {amostra_pct:.1f}%). "
+                f"Pontos visíveis a partir do zoom 6."
             )
         else:
             info_col.caption(
-                f"🔥 {len(pts):,} ponto(s) compondo o calor em {periodo_label}."
+                f"🔥 {len(pts):,} ponto(s) compondo o calor — **amostra** de "
+                f"{total_real:,} ocorrências oficiais no período. "
+                f"Padrão espacial é preservado pela amostragem uniforme "
+                f"(seed fixa)."
             )
+        info_col.info(
+            "ℹ️ **Por que amostra?** A base completa tem ~600 MB e só cabe na "
+            "máquina local. Para rodar no Streamlit Cloud, usamos uma amostra "
+            "aleatória (até 5.000 pontos/ANO×MES · seed 42 · "
+            "`pipeline/build_sample.py`). **Totais e KPIs acima vêm dos "
+            "agregados — são os números reais da SSP-SP**. Use o recorte "
+            "coroplético (Delegacia / Setor) quando precisar de contagem "
+            "exata espacialmente.",
+            icon="ℹ️",
+        )
     else:
         info_col.info(
             f"Sem pontos com coordenadas válidas em {periodo_label} "
@@ -307,13 +328,14 @@ fmap = build_map(
     endereco_marker=endereco_marker,
     points_min_zoom=6,
     fit_bounds=None,             # sem fit automático (não há mais dropdown PMESP)
+    with_draw_tools=True,        # ferramenta laço (polígono/retângulo/círculo)
 )
 
 ret = st_folium(
     fmap,
     use_container_width=True,
     height=640,
-    returned_objects=["zoom", "center"],
+    returned_objects=["zoom", "center", "last_active_drawing", "all_drawings"],
     key="home_map",
 )
 if ret:
@@ -322,6 +344,62 @@ if ret:
     c = ret.get("center")
     if c and "lat" in c and "lng" in c:
         st.session_state.map_center = (float(c["lat"]), float(c["lng"]))
+
+# ---------------------------------------------------------------------------
+# Ferramenta laço — análise de ocorrências dentro da forma desenhada
+# ---------------------------------------------------------------------------
+# O usuário pode desenhar no mapa (polígono/retângulo/círculo) via os
+# ícones no canto superior esquerdo. Capturamos a geometria no retorno do
+# st_folium e fazemos point-in-polygon via shapely sobre o DataFrame de
+# pontos já carregado pra o período atual.
+drawing = (ret or {}).get("last_active_drawing")
+if drawing and pts_data is not None and not pts_data.df.empty:
+    subset = points_in_drawing(pts_data.df, drawing)
+    st.subheader("🔗 Seleção por laço")
+    if subset.empty:
+        st.warning(
+            "Nenhum ponto caiu dentro da forma desenhada. "
+            "Tente ampliar a área ou redesenhar."
+        )
+    else:
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Pontos na seleção", f"{len(subset):,}".replace(",", "."))
+        k2.metric(
+            "Naturezas distintas",
+            f"{subset['NATUREZA_APURADA'].nunique():,}".replace(",", "."),
+        )
+        if "NOME_MUNICIPIO" in subset.columns:
+            k3.metric(
+                "Municípios",
+                f"{subset['NOME_MUNICIPIO'].nunique():,}".replace(",", "."),
+            )
+
+        # Ranking rápido de naturezas dentro da seleção
+        rank_sel = (
+            subset.groupby("NATUREZA_APURADA", dropna=True)
+            .size().sort_values(ascending=False).head(10)
+            .rename("Ocorrências (amostra)").reset_index()
+        )
+        st.dataframe(rank_sel, use_container_width=True)
+
+        # Export da seleção pra CSV
+        cols_keep = [c for c in [
+            "DATA_OCORRENCIA_BO", "NATUREZA_APURADA", "NOME_MUNICIPIO",
+            "LATITUDE", "LONGITUDE",
+        ] if c in subset.columns]
+        csv = subset[cols_keep].to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇ Baixar seleção (CSV)",
+            data=csv,
+            file_name="selecao_laco.csv",
+            mime="text/csv",
+            use_container_width=False,
+        )
+        st.caption(
+            "ℹ️ A contagem acima é sobre a **amostra exibida** no mapa. "
+            "Para números exatos da SSP dentro de um recorte administrativo, "
+            "use o coroplético por DP / Setor Censitário."
+        )
 
 # -------------------------------------------------------------------------
 # Legenda unificada abaixo do mapa
@@ -339,6 +417,9 @@ st.markdown(
 )
 
 st.caption(
-    "📍 Use **scroll do mouse** para zoom e arraste para pan. O recorte do "
-    "coroplético (Delegacia ou Setor Censitário) vem da aba lateral."
+    "📍 Use **scroll do mouse** para zoom e arraste para pan. "
+    "Use os ícones **▢ polígono · ▭ retângulo · ⊙ círculo** no canto "
+    "superior esquerdo para selecionar ocorrências dentro de uma área. "
+    "O recorte do coroplético (Delegacia ou Setor Censitário) vem da "
+    "aba lateral."
 )
