@@ -8,6 +8,10 @@ Pontos desta rodada:
     range "últimos 2 anos": o primeiro carregamento da Home abre no mês
     mais recente presente em ``serie_estado`` (ex.: 01/mar/2026–31/mar/2026).
     A partir daí o usuário amplia manualmente.
+  • **Default de natureza = TOP-1 por volume.** Pré-seleção no first-run
+    da natureza mais frequente na base — garante que o mapa abra com o
+    coroplético por Delegacia já renderizado (ver ``_top_natureza_default``).
+    Se o usuário limpar o multiselect, a escolha dele é respeitada.
   • **Recortes reduzidos a dois:** Delegacia (DP) e Setor Censitário.
     CPA / BTL / CIA / Município foram retirados da aba lateral a pedido
     do cliente — a análise PMESP agora vive em páginas específicas.
@@ -177,6 +181,29 @@ def _echo_session_state() -> None:
             st.session_state[k] = st.session_state[k]
 
 
+def _top_natureza_default() -> list[str]:
+    """Pré-seleção inteligente: a natureza mais frequente da série estadual.
+
+    Rationale (abr/2026 rodada #3): o cliente pediu que a Home abra já com o
+    coroplético por Delegacia renderizado. Como o coroplético depende de
+    ≥1 natureza selecionada, plantamos a top-1 por volume total no
+    ``session_state`` no first-run. Se o usuário limpar o multiselect
+    depois, a escolha dele é respeitada (o ``if SS_NATUREZAS not in
+    st.session_state`` guarda isso).
+    """
+    try:
+        sr = data.serie_estado()
+        if sr is None or sr.empty or "NATUREZA_APURADA" not in sr.columns:
+            return []
+        top1 = (
+            sr.groupby("NATUREZA_APURADA", observed=True)["N"]
+            .sum().sort_values(ascending=False).head(1).index.tolist()
+        )
+        return [str(x) for x in top1 if pd.notna(x)]
+    except Exception:
+        return []
+
+
 def sidebar_filters(default_naturezas: Optional[list[str]] = None) -> GlobalFilters:
     # Precisa vir ANTES de qualquer widget desta função — senão o echo é tarde
     # demais e o valor já foi descartado pelo Streamlit.
@@ -201,7 +228,11 @@ def sidebar_filters(default_naturezas: Optional[list[str]] = None) -> GlobalFilt
     # --- Naturezas (multiselect) — persistida via key ---------------------
     all_naturezas = data.naturezas_disponiveis()
     # Garante que a seed do state exista (só na primeira visita).
+    # Se o caller não passou default explícito, plantamos a natureza top-1
+    # por volume → Home abre com coroplético por Delegacia já habilitado.
     if SS_NATUREZAS not in st.session_state:
+        if default_naturezas is None:
+            default_naturezas = _top_natureza_default()
         st.session_state[SS_NATUREZAS] = default_naturezas or []
     # Remove entradas que sumiram do agregado (ex.: natureza renomeada).
     st.session_state[SS_NATUREZAS] = [

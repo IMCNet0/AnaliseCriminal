@@ -7,7 +7,10 @@ Regras desta rodada (abr/2026):
   • Filtros (período, naturezas, recorte) persistem ao alternar entre
     páginas — controlados por ``lib.filters`` via session_state.
   • Default de período = último mês com dado disponível (plant no first-run).
-  • Camada temática só renderiza quando ≥1 natureza selecionada.
+  • Default do mapa = **coroplético por Delegacia** com a natureza top-1
+    pré-selecionada (pedido cliente abr/26 #3). Camada temática continua
+    dependendo de ≥1 natureza; se o usuário limpar o multiselect, o mapa
+    volta pra base sem tema.
   • Busca de endereço com autocomplete inline via datalist HTML.
 """
 from __future__ import annotations
@@ -115,9 +118,10 @@ modo_label = ctrl_a.radio(
     "Visualização",
     ["Coroplético", "Pontos", "Hotspot"],
     horizontal=True,
-    help="Escolha uma forma de ver os dados. Os limites administrativos "
-         "não são mais desenhados — só aparece o dado temático quando há "
-         "naturezas selecionadas na sidebar.",
+    index=0,  # default = Coroplético (por Delegacia, via recorte da sidebar)
+    help="Escolha uma forma de ver os dados. O default é **Coroplético** "
+         "no recorte de **Delegacia** selecionado na sidebar. "
+         "A camada temática só aparece quando há ≥1 natureza selecionada.",
 )
 MODE = {"Coroplético": "choropleth", "Pontos": "pontos", "Hotspot": "hotspot"}[modo_label]
 
