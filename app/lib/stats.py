@@ -90,8 +90,25 @@ def forecast_arima(ts: pd.Series, horizon: int = 12,
     return out
 
 
+def prophet_available() -> bool:
+    """Detecta se o Prophet foi instalado. Em prod (Streamlit Cloud, 1GB RAM)
+    removemos do requirements porque stan/cmdstanpy consomem ~400 MB só no import.
+    Em dev local segue ativo se o usuário instalou."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec("prophet") is not None
+    except Exception:
+        return False
+
+
 def forecast_prophet(ts: pd.Series, horizon: int = 12) -> pd.DataFrame:
     """Alternativa ao ARIMA — mais robusta a feriados e quebras estruturais."""
+    if not prophet_available():
+        raise RuntimeError(
+            "Prophet não está instalado neste ambiente (economia de memória no "
+            "Streamlit Cloud). Use SARIMA, que oferece precisão comparável pra "
+            "esta série mensal."
+        )
     from prophet import Prophet
     df = ts.rename("y").reset_index().rename(columns={ts.index.name or "index": "ds"})
     m = Prophet(weekly_seasonality=False, daily_seasonality=False)

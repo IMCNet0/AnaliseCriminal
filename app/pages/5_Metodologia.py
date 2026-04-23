@@ -9,7 +9,7 @@ import streamlit as st
 from lib.branding import apply_brand, header
 
 apply_brand("Metodologia · Portal de Análise Criminal")
-header("Metodologia, fontes e limitações")
+header("Metodologia", "Fontes, limitações e referências bibliográficas")
 
 st.markdown(
     """

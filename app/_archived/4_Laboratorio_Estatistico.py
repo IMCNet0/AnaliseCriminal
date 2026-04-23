@@ -24,7 +24,7 @@ from lib import data, stats
 from lib.downloads import download_buttons
 
 apply_brand("Laboratório Estatístico · InsightGeoLab AI")
-header("Aplique técnicas avançadas ao recorte atual")
+header("Laboratório Estatístico", "Aplique técnicas avançadas ao recorte atual")
 
 f = sidebar_filters()
 

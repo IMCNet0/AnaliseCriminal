@@ -1,4 +1,15 @@
-"""Home — visão executiva com KPIs e série estadual."""
+"""Home — KPIs + mapa interativo (coroplético / pontos / hotspot).
+
+Regras desta rodada (abr/2026):
+  • Mapa SEM limites administrativos PMESP — apenas Delegacia (DP) e
+    Setor Censitário aparecem, via coroplético, quando o usuário escolhe
+    o recorte na sidebar. Rótulos halo-branco foram suprimidos.
+  • Filtros (período, naturezas, recorte) persistem ao alternar entre
+    páginas — controlados por ``lib.filters`` via session_state.
+  • Default de período = último mês com dado disponível (plant no first-run).
+  • Camada temática só renderiza quando ≥1 natureza selecionada.
+  • Busca de endereço com autocomplete inline via datalist HTML.
+"""
 from __future__ import annotations
 
 import sys
@@ -7,18 +18,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pandas as pd
 import streamlit as st
-import plotly.express as px
+from streamlit_folium import st_folium
 
 from lib.branding import apply_brand, header
-from lib import data
-from lib.filters import sidebar_filters
-from lib.downloads import download_buttons
+from lib.filters import sidebar_filters, sidebar_footer
+from lib import data, geo as geolib
+from lib.map_builder import (
+    build_map, PointsData, ChoroplethData,
+    geocode_many,
+    legenda_unificada_html, _points_color_map,
+)
 
-brand = apply_brand("Home · Portal de Análise Criminal")
-header("Visão executiva dos indicadores criminais do estado de SP")
+
+apply_brand("Home · InsightGeoLab AI")
+header("Portal de Análise Criminal · SP",
+       "Visão espacial dos indicadores criminais do estado de São Paulo")
 
 f = sidebar_filters()
 
+# Reset do mapa na sidebar (zoom/centro). Não mexe nos filtros globais
+# (esses persistem entre páginas por design).
+reset_map = st.sidebar.button("↺ Reset do mapa", use_container_width=True)
+
+sidebar_footer()
+
+
+# =========================================================================
+# 1) KPIs
+# =========================================================================
 serie = data.serie_estado()
 if serie.empty:
     st.info(
@@ -27,13 +54,11 @@ if serie.empty:
     )
     st.stop()
 
-# Filtros globais
-mask = f.mask_date(serie) & f.mask_natureza(serie)
-serie_f = serie.loc[mask]
+mask_serie = f.mask_date(serie) & f.mask_natureza(serie)
+serie_f = serie.loc[mask_serie]
 
-# --- KPIs ---
 total_periodo = int(serie_f["N"].sum())
-ultimo_ano = int(serie_f["ANO"].max())
+ultimo_ano = int(serie_f["ANO"].max()) if not serie_f.empty else f.data_fim.year
 total_ultimo_ano = int(serie_f.loc[serie_f["ANO"] == ultimo_ano, "N"].sum())
 anos_unicos = sorted(serie_f["ANO"].unique())
 if len(anos_unicos) >= 2:
@@ -44,44 +69,276 @@ else:
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total no período", f"{total_periodo:,}".replace(",", "."))
-k2.metric(f"Total em {ultimo_ano}", f"{total_ultimo_ano:,}".replace(",", "."),
-          f"{delta_yoy:+.1f}% vs. ano anterior")
-k3.metric("Naturezas incluídas",
-          f"{serie_f['NATUREZA_APURADA'].nunique():,}".replace(",", "."))
-k4.metric("Meses cobertos", f"{serie_f.groupby(['ANO','MES']).ngroups:,}".replace(",", "."))
+k2.metric(
+    f"Total em {ultimo_ano}", f"{total_ultimo_ano:,}".replace(",", "."),
+    f"{delta_yoy:+.1f}% vs. ano anterior",
+)
+k3.metric(
+    "Naturezas incluídas",
+    f"{serie_f['NATUREZA_APURADA'].nunique():,}".replace(",", "."),
+)
+k4.metric(
+    "Meses cobertos",
+    f"{serie_f.groupby(['ANO','MES']).ngroups:,}".replace(",", "."),
+)
 
 st.divider()
 
-# --- Série mensal estadual ---
-st.subheader("Evolução mensal no estado de SP")
-serie_mes = (
-    serie_f.groupby("DATA", as_index=False)["N"].sum().sort_values("DATA")
-)
-fig = px.line(serie_mes, x="DATA", y="N", markers=False)
-fig.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10),
-                  xaxis_title=None, yaxis_title="Ocorrências")
-st.plotly_chart(fig, use_container_width=True)
 
-# --- Top naturezas no período ---
-st.subheader("Naturezas mais registradas no período selecionado")
-top = (
-    serie_f.groupby("NATUREZA_APURADA", as_index=False)["N"].sum()
-    .sort_values("N", ascending=False).head(20)
-)
-fig2 = px.bar(top, x="N", y="NATUREZA_APURADA", orientation="h")
-fig2.update_layout(height=520, yaxis=dict(autorange="reversed"),
-                   margin=dict(l=10, r=10, t=10, b=10),
-                   xaxis_title="Ocorrências", yaxis_title=None)
-st.plotly_chart(fig2, use_container_width=True)
+# =========================================================================
+# 2) Estado do mapa (persistido entre reruns)
+# =========================================================================
+DEFAULT_CENTER = (-22.4, -48.5)   # ≈ centro geográfico de SP
+DEFAULT_ZOOM = 7
 
-st.divider()
-st.subheader("Exportar dados filtrados")
-download_buttons(
-    serie_f.drop(columns=["DATA"]),
-    basename="serie_estadual",
-    meta={
-        "ano_inicio": f.ano_ini, "ano_fim": f.ano_fim,
-        "naturezas": ", ".join(f.naturezas) if f.naturezas else "todas",
-        "fonte": "SSP-SP",
-    },
+if "map_center" not in st.session_state:
+    st.session_state.map_center = DEFAULT_CENTER
+if "map_zoom" not in st.session_state:
+    st.session_state.map_zoom = DEFAULT_ZOOM
+
+if reset_map:
+    st.session_state.map_center = DEFAULT_CENTER
+    st.session_state.map_zoom = DEFAULT_ZOOM
+    st.session_state["_endereco_marker"] = None
+    st.rerun()
+
+
+# =========================================================================
+# 3) Controles do corpo da página — modo + busca de endereço
+# =========================================================================
+st.subheader("Mapa interativo")
+
+ctrl_a, ctrl_b = st.columns([1.2, 3.0])
+
+modo_label = ctrl_a.radio(
+    "Visualização",
+    ["Coroplético", "Pontos", "Hotspot"],
+    horizontal=True,
+    help="Escolha uma forma de ver os dados. Os limites administrativos "
+         "não são mais desenhados — só aparece o dado temático quando há "
+         "naturezas selecionadas na sidebar.",
+)
+MODE = {"Coroplético": "choropleth", "Pontos": "pontos", "Hotspot": "hotspot"}[modo_label]
+
+# -------------------------------------------------------------------------
+# Busca de endereço com AUTOCOMPLETE INLINE via <datalist>
+# -------------------------------------------------------------------------
+with ctrl_b:
+    st.markdown("**Buscar endereço** (digite e selecione nas sugestões)")
+    search_col1, search_col2 = st.columns([3.2, 1.0])
+
+    endereco_q = search_col1.text_input(
+        "Buscar endereço",
+        placeholder="Ex.: Av. Paulista 1578, São Paulo",
+        label_visibility="collapsed",
+        key="endereco_q",
+    )
+    do_buscar = search_col2.button("🔍 Centralizar", use_container_width=True)
+
+    hits: list[dict] = []
+    if endereco_q and len(endereco_q.strip()) >= 3:
+        hits = geocode_many(endereco_q, limit=7)
+        st.session_state["_geo_hits"] = hits
+    else:
+        st.session_state["_geo_hits"] = []
+
+    if hits:
+        def _opt(h: dict) -> str:
+            name = str(h.get("display_name", "")).replace('"', "&quot;")
+            return f'<option value="{name}"></option>'
+        options_html = "".join(_opt(h) for h in hits)
+        st.markdown(
+            f"""
+            <datalist id="endereco-suggestions">{options_html}</datalist>
+            <script>
+              (function() {{
+                const inputs = window.parent.document.querySelectorAll(
+                  'input[aria-label="Buscar endereço"]'
+                );
+                inputs.forEach(inp => inp.setAttribute('list', 'endereco-suggestions'));
+              }})();
+            </script>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.expander(f"Sugestões ({len(hits)})", expanded=False):
+            for h in hits[:7]:
+                st.caption(f"• {h['display_name']}")
+
+    if do_buscar and endereco_q and hits:
+        chosen = next(
+            (h for h in hits if h["display_name"] == endereco_q),
+            hits[0],
+        )
+        st.session_state.map_center = (chosen["lat"], chosen["lon"])
+        st.session_state.map_zoom = 15
+        st.session_state["_endereco_marker"] = (
+            chosen["lat"], chosen["lon"], chosen["display_name"]
+        )
+        st.rerun()
+
+    endereco_marker = st.session_state.get("_endereco_marker")
+
+
+# =========================================================================
+# 4) Pipeline de dados — só se houver natureza definida na sidebar
+# =========================================================================
+pts_data = None
+choro_data = None
+periodo_label = None
+
+tem_natureza = bool(f.naturezas)
+
+if not tem_natureza:
+    st.info(
+        "ℹ️ Selecione **uma ou mais naturezas** na aba lateral para ativar "
+        "a camada temática. Enquanto isso, o mapa exibe apenas a base."
+    )
+
+if tem_natureza and MODE in ("pontos", "hotspot"):
+    anos_range = list(range(int(f.ano_ini), int(f.ano_fim) + 1))
+    frames: list[pd.DataFrame] = []
+    for a in anos_range:
+        m_start = f.data_ini.month if a == f.ano_ini else 1
+        m_end = f.data_fim.month if a == f.ano_fim else 12
+        for m in range(m_start, m_end + 1):
+            for nat in f.naturezas:
+                df_am = data.pontos(int(a), int(m), nat)
+                if not df_am.empty:
+                    frames.append(df_am)
+    pts = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not pts.empty:
+        pts = pts.drop_duplicates()
+
+    periodo_label = (
+        f"{f.data_ini.strftime('%d/%m/%Y')} a {f.data_fim.strftime('%d/%m/%Y')}"
+    )
+
+    pts_data = PointsData(df=pts, periodo_label=periodo_label)
+    info_col = st.columns(1)[0]
+    if not pts.empty:
+        if MODE == "pontos":
+            info_col.caption(
+                f"📍 {len(pts):,} ponto(s) carregado(s) em {periodo_label} — "
+                f"{pts['NATUREZA_APURADA'].nunique()} indicador(es). "
+                f"Visíveis a partir do zoom 6."
+            )
+        else:
+            info_col.caption(
+                f"🔥 {len(pts):,} ponto(s) compondo o calor em {periodo_label}."
+            )
+    else:
+        info_col.info(
+            f"Sem pontos com coordenadas válidas em {periodo_label} "
+            f"para as naturezas selecionadas."
+        )
+
+if tem_natureza and MODE == "choropleth":
+    recorte_choro = f.recorte  # só DP ou Setor (filtros.RECORTES enxuto)
+    loader, data_key = data.RECORTE_LOADER[recorte_choro]
+    df_rec = loader()
+    if df_rec.empty:
+        st.warning(
+            f"Agregado de **{recorte_choro}** não encontrado. "
+            f"Rode `python pipeline/run_all.py` para regerá-lo."
+        )
+    else:
+        mask_rec = f.mask_date(df_rec) & f.mask_natureza(df_rec)
+        agg_cols = [c for c in df_rec.columns if c in {
+            data_key, "NM_MUN", "regiao", "DpGeoDes", "CD_MUN", "sc_cod",
+        }]
+        agg = (
+            df_rec.loc[mask_rec]
+            .groupby([data_key] + [c for c in agg_cols if c != data_key],
+                     as_index=False, observed=True)["N"].sum()
+        )
+
+        gdf, geo_key = geolib.load_layer(recorte_choro)
+        if gdf is None:
+            st.warning(f"Camada `{recorte_choro}` não encontrada em `data/geo/`.")
+        else:
+            def _norm_key(s: pd.Series) -> pd.Series:
+                nums = pd.to_numeric(s, errors="coerce")
+                valid = nums.dropna()
+                if not valid.empty and (valid == valid.astype("int64")).all():
+                    return nums.astype("Int64").astype("string")
+                return s.astype("string").str.strip().str.upper()
+
+            gdf = gdf.copy()
+            agg_local = agg.copy()
+            gdf[geo_key] = _norm_key(gdf[geo_key])
+            agg_local[data_key] = _norm_key(agg_local[data_key])
+
+            merged = gdf.merge(agg_local, left_on=geo_key, right_on=data_key, how="left")
+            merged["N"] = merged["N"].fillna(0)
+
+            label_col = next(
+                (c for c in ["DpGeoDes", "NM_MUN", "__label__"]
+                 if c in merged.columns),
+                None,
+            )
+            choro_data = ChoroplethData(
+                gdf=merged, value_col="N", key_col=geo_key, label_col=label_col,
+            )
+
+            n_com_valor = int((merged["N"] > 0).sum())
+            if n_com_valor == 0:
+                st.warning(
+                    f"⚠️ Nenhum polígono de **{recorte_choro}** recebeu valor > 0 "
+                    f"para o filtro atual. Verifique período/natureza."
+                )
+            elif recorte_choro == "Setor Censitário":
+                st.caption(
+                    f"ℹ️ Setor Censitário é a camada mais granular (~250k polígonos). "
+                    f"Em zoom baixo fica denso; aproxime para ler com conforto."
+                )
+
+
+# =========================================================================
+# 5) Renderização do mapa
+# =========================================================================
+fmap = build_map(
+    modo=MODE,
+    pts_data=pts_data,
+    choro_data=choro_data,
+    center=st.session_state.map_center,
+    zoom=st.session_state.map_zoom,
+    with_pmesp_labels=False,     # rótulos suprimidos em definitivo
+    endereco_marker=endereco_marker,
+    points_min_zoom=6,
+    fit_bounds=None,             # sem fit automático (não há mais dropdown PMESP)
+)
+
+ret = st_folium(
+    fmap,
+    use_container_width=True,
+    height=640,
+    returned_objects=["zoom", "center"],
+    key="home_map",
+)
+if ret:
+    if ret.get("zoom") is not None:
+        st.session_state.map_zoom = int(ret["zoom"])
+    c = ret.get("center")
+    if c and "lat" in c and "lng" in c:
+        st.session_state.map_center = (float(c["lat"]), float(c["lng"]))
+
+# -------------------------------------------------------------------------
+# Legenda unificada abaixo do mapa
+# -------------------------------------------------------------------------
+points_colors = None
+if MODE == "pontos" and pts_data is not None and not pts_data.df.empty:
+    points_colors = _points_color_map(
+        pts_data.df["NATUREZA_APURADA"].dropna().unique()
+    )
+
+choro_range = getattr(fmap, "_choro_range", None)
+st.markdown(
+    legenda_unificada_html(choro_range=choro_range, points_colors=points_colors),
+    unsafe_allow_html=True,
+)
+
+st.caption(
+    "📍 Use **scroll do mouse** para zoom e arraste para pan. O recorte do "
+    "coroplético (Delegacia ou Setor Censitário) vem da aba lateral."
 )

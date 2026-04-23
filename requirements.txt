@@ -1,8 +1,11 @@
-# Runtime (Streamlit Cloud)
-# Python 3.12 pinado em .python-version (evita wheels faltando no 3.14 beta).
-# Sem fiona nem rtree: geopandas 1.0 usa pyogrio (wheel com GDAL embutido)
-# como driver default, e shapely 2 tem STRtree nativo — ambos dispensam
-# dependências C do sistema.
+# Runtime (Streamlit Cloud, ~1 GB RAM) — enxuto para caber.
+# Sem fiona/rtree: geopandas 1.0 usa pyogrio (wheel com GDAL embutido) como
+# driver default; shapely 2 tem STRtree nativo. Ambos dispensam libs C do sistema.
+# Sem prophet: cmdstanpy/stan comem ~400 MB de RAM só no import e estouram o limite.
+#   A página de Séries Temporais detecta a ausência e oferece só SARIMA (statsmodels).
+# folium + streamlit-folium (~40 MB) usado no mapa interativo da Home (base PMESP
+# permanente, toggle coropletico/pontos/hotspot, busca Nominatim) — cabe no 1 GB
+# porque Prophet já saiu.
 streamlit>=1.36,<2
 pandas>=2.2,<3
 numpy>=1.26,<3
@@ -11,15 +14,15 @@ openpyxl>=3.1
 scipy>=1.13
 scikit-learn>=1.4
 statsmodels>=0.14
-prophet>=1.1.5
 plotly>=5.22
 pydeck>=0.9
-folium>=0.17
-streamlit-folium>=0.20
 geopandas>=1.0
 shapely>=2.0
 pyproj>=3.6
 pyogrio>=0.9
+folium>=0.16
+streamlit-folium>=0.20
+requests>=2.31
 unidecode>=1.3
 PyYAML>=6.0
 xlsxwriter>=3.2

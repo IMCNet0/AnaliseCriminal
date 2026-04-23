@@ -83,6 +83,28 @@ def por_setor() -> pd.DataFrame:
     return _safe_read(AGG / "por_setor.parquet")
 
 
+@st.cache_data(show_spinner="Carregando matriz hora × dia…", ttl=3600)
+def matriz_hora_dia() -> pd.DataFrame:
+    """Agregado Dia da Semana × Faixa Hora × DESC_PERIODO.
+
+    Gerado por ``pipeline/aggregate_hora_dia.py``. Se o arquivo não existir
+    ainda (pipeline não rodou), devolve DataFrame vazio — a UI mostra um
+    aviso orientando a rodar o agregador.
+    """
+    df = _safe_read(AGG / "matriz_hora_dia.parquet")
+    if df.empty:
+        return df
+    # Reconstrói DATA (1º dia do mês) — permite reaproveitar f.mask_date() sem
+    # precisar duplicar a lógica de ANO+MES na página.
+    if {"ANO", "MES"}.issubset(df.columns):
+        df["DATA"] = pd.to_datetime(
+            df["ANO"].astype("Int64").astype("string") + "-"
+            + df["MES"].astype("Int64").astype("string").str.zfill(2) + "-01",
+            errors="coerce",
+        )
+    return df
+
+
 @st.cache_data(ttl=3600)
 def naturezas_disponiveis() -> list[str]:
     df = _safe_read(AGG / "cubo_natureza.parquet")
