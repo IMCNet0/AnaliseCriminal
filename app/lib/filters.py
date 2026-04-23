@@ -268,3 +268,4 @@ def sidebar_footer() -> None:
     st.sidebar.markdown("---")
     st.sidebar.caption("Fonte: SSP-SP · IBGE")
     st.sidebar.caption("Desenvolvido por InsightGeoLab AI")
+    st.sidebar.caption("© 2026 Todos os direitos reservados. InsightGeoLab AI")
