@@ -929,6 +929,8 @@ section h2 {
 .kpi-sub { font-size: 12px; color: #888; margin-top: 4px; }
 .kpi-card.alert { border-top-color: #E53935; }
 .kpi-card.good  { border-top-color: #43A047; }
+.kpi-card.alert .kpi-sub { color: #E53935; font-weight: 600; }
+.kpi-card.good  .kpi-sub { color: #43A047; font-weight: 600; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead tr { background: #0C2B4E; color: white; }
 thead th { padding: 10px 14px; text-align: left; font-weight: 500; }
@@ -972,7 +974,7 @@ def render_html(f: GlobalFilters, d: dict, figs: dict, insights: str) -> str:
         )
 
     delta = d["delta_yoy"]
-    delta_cls = "alert" if delta > 10 else ("good" if delta < -5 else "")
+    delta_cls = "alert" if delta > 0 else ("good" if delta < 0 else "")
     num_nats = len(d["nat_counts"]) if not d["nat_counts"].empty else 0
     total_str = f"{d['total_periodo']:,}".replace(",", ".")
     ult_ano_str = f"{d['total_ultimo_ano']:,}".replace(",", ".")
@@ -1206,7 +1208,7 @@ def _pdf_kpi_row(pdf, items: list[tuple[str, str, str]], delta: float) -> None:
         # Borda superior colorida
         border_col = _ACCENT
         if i == 1:
-            border_col = (227, 57, 53) if delta > 5 else ((67, 160, 71) if delta < -5 else _ACCENT)
+            border_col = (227, 57, 53) if delta > 0 else ((67, 160, 71) if delta < 0 else _ACCENT)
         pdf.set_fill_color(*border_col)
         pdf.rect(x, y0, card_w, 2, style="F")
         # Fundo card
@@ -1222,10 +1224,11 @@ def _pdf_kpi_row(pdf, items: list[tuple[str, str, str]], delta: float) -> None:
         pdf.set_text_color(*_BLUE)
         pdf.set_xy(x + 2, y0 + 9)
         pdf.cell(card_w - 4, 7, str(valor), ln=True)
-        # Sub
+        # Sub — delta card (i==1) herda a cor da borda
         if sub:
             pdf.set_font("Helvetica", "", 7)
-            pdf.set_text_color(*_GREY)
+            sub_col = border_col if i == 1 and border_col != _ACCENT else _GREY
+            pdf.set_text_color(*sub_col)
             pdf.set_xy(x + 2, y0 + 17)
             pdf.cell(card_w - 4, 4, str(sub), ln=True)
 

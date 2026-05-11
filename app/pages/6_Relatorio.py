@@ -256,6 +256,7 @@ if SS_HTML in st.session_state:
             f"Total em {d['ultimo_ano']}",
             f"{d['total_ultimo_ano']:,}".replace(",", "."),
             f"{d['delta_yoy']:+.1f}% vs. ano anterior",
+            delta_color="inverse",
         )
         k3.metric(
             "Naturezas Distintas",

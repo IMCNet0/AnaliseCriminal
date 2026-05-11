@@ -95,6 +95,7 @@ k1.metric("Total no período", f"{total_periodo:,}".replace(",", "."))
 k2.metric(
     f"Total em {ultimo_ano}", f"{total_ultimo_ano:,}".replace(",", "."),
     f"{delta_yoy:+.1f}% vs. ano anterior",
+    delta_color="inverse",
 )
 k3.metric(
     "Naturezas incluídas",
