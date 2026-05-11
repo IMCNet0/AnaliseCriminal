@@ -334,6 +334,52 @@ def dia_mes() -> pd.DataFrame:
     return _safe_read(AGG / "dia_mes.parquet")
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def por_celulares() -> pd.DataFrame:
+    """Agregado de celulares subtraídos em SP-Capital.
+
+    Colunas: ANO · MES · RUBRICA · MARCA_OBJETO · DESCR_TIPOLOCAL
+             · DESCR_PERIODO · FLAG_BLOQUEIO · DpGeoCod · N
+    Retorna DataFrame vazio enquanto o arquivo não existir.
+    """
+    return _safe_read(AGG / "por_celulares.parquet")
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def por_veiculos() -> pd.DataFrame:
+    """Agregado de veículos subtraídos em SP-Capital.
+
+    Colunas: ANO · MES · RUBRICA · DESCR_MODO_OBJETO · DESCR_TIPO_OBJETO
+             · MARCA_OBJETO · DESCR_TIPOLOCAL · DESCR_PERIODO · FLAG_STATUS
+             · DpGeoCod · N
+    Retorna DataFrame vazio enquanto o arquivo não existir.
+    """
+    return _safe_read(AGG / "por_veiculos.parquet")
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def por_objetos() -> pd.DataFrame:
+    """Agregado de objetos subtraídos em SP-Capital.
+
+    Colunas: ANO · MES · RUBRICA · DESCR_TIPO_OBJETO · DESCR_SUBTIPO_OBJETO
+             · DESCR_TIPOLOCAL · DESCR_PERIODO · DpGeoCod · N
+    DESCR_SUBTIPO_OBJETO: top-50 mais frequentes; demais agrupados como 'OUTROS'.
+    Retorna DataFrame vazio enquanto o arquivo não existir.
+    """
+    return _safe_read(AGG / "por_objetos.parquet")
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def por_bairro_subtraidos() -> pd.DataFrame:
+    """Agregado de subtraídos por bairro (sem spatial join) em SP-Capital.
+
+    Colunas: FONTE · ANO · MES · BAIRRO · RUBRICA · N
+    FONTE ∈ {"CELULARES", "VEICULOS", "OBJETOS"}
+    Retorna DataFrame vazio enquanto o arquivo não existir.
+    """
+    return _safe_read(AGG / "por_bairro_subtraidos.parquet")
+
+
 @st.cache_data(ttl=3600)
 def naturezas_disponiveis() -> list[str]:
     df = _safe_read(AGG / "cubo_natureza.parquet")

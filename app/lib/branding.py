@@ -64,6 +64,7 @@ def apply_brand(page_title: str | None = None, layout: str = "wide") -> dict:
                 logo,
                 link=None,
                 icon_image=logo,
+                size="large",
             )
         except Exception:
             # Streamlit antigo: cai no fallback via image() + aviso silencioso.
@@ -115,6 +116,14 @@ def apply_brand(page_title: str | None = None, layout: str = "wide") -> dict:
             max-width: 100% !important; width: 100% !important;
         }}
         a, a:visited {{color: var(--accent);}}
+        /* Botão de recolher/expandir sidebar — centralizado verticalmente na borda */
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="collapsedControl"] {{
+            position: fixed !important;
+            top: 50% !important;
+            bottom: auto !important;
+            transform: translateY(-50%) !important;
+        }}
         /* Título de página compacto (a área superior fica livre). */
         .page-title h1 {{margin: 0 0 .15rem 0; font-size: 1.9rem; line-height: 1.1;}}
         .page-title .page-subtitle {{
