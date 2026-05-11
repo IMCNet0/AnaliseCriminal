@@ -92,9 +92,47 @@ totals = (
     ranking.groupby([data_key, "__label__"], as_index=False, observed=True)["N"]
     .sum().sort_values("N", ascending=False).head(top_n)
 )
+
+# --- Quando há filtro de DP ativo e o recorte é Delegacia: garante que a
+# DP selecionada apareça sempre em 1ª posição para fins comparativos. ----
+_pinned_label: str | None = None
+if f.dp_cod and recorte_rank == "Delegacia (DP)":
+    sel_key = str(f.dp_cod).strip()
+
+    # Normaliza a coluna de chave do totals para comparar com f.dp_cod.
+    def _norm_keys(s: pd.Series) -> pd.Series:
+        nums = pd.to_numeric(s, errors="coerce")
+        valid = nums.dropna()
+        if not valid.empty and (valid == valid.astype("int64")).all():
+            return nums.astype("Int64").astype("string")
+        return s.astype("string").str.strip()
+
+    totals_norm = _norm_keys(totals[data_key])
+    sel_mask = totals_norm == sel_key
+
+    if sel_mask.any():
+        # DP já está no top-N — move-a para a posição 0.
+        sel_rows   = totals[sel_mask]
+        other_rows = totals[~sel_mask]
+        totals = pd.concat([sel_rows, other_rows], ignore_index=True)
+    else:
+        # DP fora do top-N — busca no ranking completo e insere no topo.
+        ranking_norm = _norm_keys(ranking[data_key])
+        sel_rank_rows = ranking.loc[ranking_norm == sel_key]
+        if not sel_rank_rows.empty:
+            sel_total_row = (
+                sel_rank_rows
+                .groupby([data_key, "__label__"], as_index=False, observed=True)["N"]
+                .sum()
+            )
+            other_rows = totals.head(top_n - 1)
+            totals = pd.concat([sel_total_row, other_rows], ignore_index=True)
+    if not totals.empty:
+        _pinned_label = str(totals.iloc[0]["__label__"])
+
 keep_keys = set(totals[data_key].tolist())
 ranking_top = ranking[ranking[data_key].isin(keep_keys)].copy()
-# Mantém a ordem (decrescente por total) no eixo Y.
+# Mantém a ordem (decrescente por total, DP selecionada sempre 1ª) no eixo Y.
 order = totals["__label__"].tolist()
 ranking_top["__label__"] = pd.Categorical(
     ranking_top["__label__"], categories=order, ordered=True,
@@ -124,6 +162,12 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
+if _pinned_label:
+    st.caption(
+        f"★ **{_pinned_label}** aparece em 1ª posição por ser a delegacia "
+        "do filtro ativo — independente do volume de ocorrências."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Tabela detalhada + export
@@ -136,9 +180,8 @@ if ranking_top["NATUREZA_APURADA"].nunique() > 1:
             index="__label__", columns="NATUREZA_APURADA",
             values="N", aggfunc="sum", fill_value=0, observed=True,
         )
-        .reindex(order)
+        .reindex(order)          # preserva a ordem do gráfico (DP pinada em 1º)
         .assign(Total=lambda d: d.sum(axis=1))
-        .sort_values("Total", ascending=False)
     )
     st.dataframe(pivot, use_container_width=True)
 else:

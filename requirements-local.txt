@@ -1,0 +1,14 @@
+# Dependências extras para uso local (não sobem para o Streamlit Cloud).
+# Instale com: pip install -r requirements-local.txt
+#
+# kaleido              — exporta figuras Plotly como imagens PNG estáticas (necessário para PDF)
+# fpdf2                — geração de PDF puro Python (sem dependências do sistema)
+# Pillow               — leitura de dimensões das imagens PNG durante composição do PDF
+# anthropic            — insights via Claude.       Requer ANTHROPIC_API_KEY
+# google-generativeai  — insights via Gemini Flash (gratuito). Requer GOOGLE_API_KEY
+-r requirements.txt
+kaleido>=0.2
+fpdf2>=2.7
+Pillow>=10.0
+anthropic>=0.30
+google-genai>=1.0

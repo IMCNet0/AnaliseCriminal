@@ -92,31 +92,115 @@ def _dia_from_data(s: pd.Series) -> pd.Series:
     return wd.map(DIAS_PT).astype("string")
 
 
+DP_JSON = Path(__file__).resolve().parent.parent / "data" / "geo" / "DP.json"
+
+
 def load_base() -> pd.DataFrame:
     """Lê só as colunas necessárias pra a matriz — mantém leve mesmo na base
-    completa (~5M+ linhas)."""
-    import pyarrow as pa
-    import pyarrow.dataset as ds
+    completa (~5M+ linhas).
+
+    Lê partição a partição (ANO/MES) para tolerar arquivos com schema
+    divergente (ex.: partições antigas sem DESC_PERIODO). Arquivos com
+    erro de leitura são ignorados com aviso.
+    """
+    import pyarrow.parquet as pq
 
     path = PROCESSED / "sp_dados_criminais"
     log.info("Lendo dataset: %s", path)
-    partitioning = ds.partitioning(
-        pa.schema([("ANO", pa.int32()), ("MES", pa.int32())]),
-        flavor="hive",
-    )
-    dataset = ds.dataset(str(path), format="parquet", partitioning=partitioning)
-    cols = [
-        "ANO", "MES", "NATUREZA_APURADA",
-        "DATA_OCORRENCIA_BO", "HORA_OCORRENCIA_BO", "DESC_PERIODO",
+
+    WANT = [
+        "NATUREZA_APURADA", "DATA_OCORRENCIA_BO", "HORA_OCORRENCIA_BO",
+        "DESC_PERIODO", "LATITUDE", "LONGITUDE", "COORDS_VALIDAS",
     ]
-    avail = dataset.schema.names
-    cols = [c for c in cols if c in avail]
-    df = dataset.to_table(columns=cols).to_pandas()
-    if "ANO" in df.columns:
-        df["ANO"] = df["ANO"].astype("Int16")
-    if "MES" in df.columns:
-        df["MES"] = df["MES"].astype("Int8")
+
+    frames: list[pd.DataFrame] = []
+    skipped = 0
+    for ano_dir in sorted(path.glob("ANO=*")):
+        ano = int(ano_dir.name.split("=")[1])
+        for mes_dir in sorted(ano_dir.glob("MES=*")):
+            mes = int(mes_dir.name.split("=")[1])
+            for pfile in sorted(mes_dir.rglob("*.parquet")):
+                try:
+                    pf = pq.ParquetFile(str(pfile))
+                    avail = set(pf.schema_arrow.names)
+                    cols = [c for c in WANT if c in avail]
+                    chunk = pf.read(columns=cols).to_pandas()
+                    chunk["ANO"] = ano
+                    chunk["MES"] = mes
+                    # DESC_PERIODO pode estar ausente em partições antigas
+                    if "DESC_PERIODO" not in chunk.columns:
+                        chunk["DESC_PERIODO"] = pd.NA
+                    frames.append(chunk)
+                except Exception as exc:
+                    log.warning("Ignorando arquivo com erro (%s): %s", pfile.name, exc)
+                    skipped += 1
+
+    if skipped:
+        log.warning("  %s arquivo(s) ignorado(s) por erro de leitura", skipped)
+    if not frames:
+        raise RuntimeError(f"Nenhum arquivo lido em {path}")
+
+    df = pd.concat(frames, ignore_index=True)
+    df["ANO"] = df["ANO"].astype("Int16")
+    df["MES"] = df["MES"].astype("Int8")
     log.info("  %s linhas carregadas", f"{len(df):,}")
+    return df
+
+
+def _assign_dp(df: pd.DataFrame) -> pd.DataFrame:
+    """Atribui DpGeoCod a cada linha via spatial join ponto-em-polígono.
+
+    Linhas sem coordenada válida ou fora de qualquer polígono de DP recebem
+    DpGeoCod=<NA> e continuam no agregado (aparecem ao filtrar por 'todos').
+    """
+    if not DP_JSON.exists():
+        log.warning("DP.json não encontrado — DpGeoCod ausente na matriz")
+        df["DpGeoCod"] = pd.NA
+        return df
+
+    import geopandas as gpd
+
+    log.info("Spatial join ponto → DP (%s pontos)…", f"{len(df):,}")
+    valid_mask = (
+        df.get("COORDS_VALIDAS", pd.Series(False, index=df.index))
+        .fillna(False).astype(bool)
+        & df["LATITUDE"].notna()
+        & df["LONGITUDE"].notna()
+    )
+    df_v = df.loc[valid_mask].copy().reset_index(drop=True)
+
+    gdf_dp = gpd.read_file(str(DP_JSON))
+    if gdf_dp.crs is None:
+        gdf_dp = gdf_dp.set_crs("EPSG:4326")
+    else:
+        gdf_dp = gdf_dp.to_crs("EPSG:4326")
+    gdf_dp = gdf_dp[["DpGeoCod", "geometry"]].copy()
+
+    pts = gpd.GeoDataFrame(
+        df_v,
+        geometry=gpd.points_from_xy(df_v["LONGITUDE"], df_v["LATITUDE"]),
+        crs="EPSG:4326",
+    )
+    joined = gpd.sjoin(pts, gdf_dp, how="left", predicate="within")
+    if joined.index.has_duplicates:
+        joined = joined[~joined.index.duplicated(keep="first")]
+    joined = joined.drop(columns=["geometry", "index_right"], errors="ignore")
+
+    # Normaliza float "10102.0" → string "10102"
+    if "DpGeoCod" in joined.columns:
+        nums = pd.to_numeric(joined["DpGeoCod"], errors="coerce")
+        valid_nums = nums.dropna()
+        if not valid_nums.empty and (valid_nums == valid_nums.astype("int64")).all():
+            joined["DpGeoCod"] = nums.astype("Int64").astype("string")
+        else:
+            joined["DpGeoCod"] = joined["DpGeoCod"].astype("string").str.strip()
+
+    # Insere DpGeoCod de volta no df original (inválidos/fora ficam com <NA>)
+    df = df.copy()
+    df["DpGeoCod"] = pd.NA
+    df.loc[valid_mask, "DpGeoCod"] = joined["DpGeoCod"].values
+    log.info("  DpGeoCod atribuído a %s/%s linhas",
+             f"{df['DpGeoCod'].notna().sum():,}", f"{len(df):,}")
     return df
 
 
@@ -136,6 +220,9 @@ def build() -> pd.DataFrame:
     if "NATUREZA_APURADA" in df.columns:
         df["NATUREZA_APURADA"] = normalize_natureza(df["NATUREZA_APURADA"])
 
+    # Atribui DpGeoCod via spatial join (permite filtro por DP no app)
+    df = _assign_dp(df)
+
     # Deriva eixos da matriz
     df["DIA_SEMANA"] = _dia_from_data(df["DATA_OCORRENCIA_BO"])
     df["FAIXA_HORA"] = _faixa_from_hora(df["HORA_OCORRENCIA_BO"])
@@ -153,7 +240,7 @@ def build() -> pd.DataFrame:
 
     grp = (
         df.groupby(
-            ["ANO", "MES", "NATUREZA_APURADA",
+            ["ANO", "MES", "NATUREZA_APURADA", "DpGeoCod",
              "DIA_SEMANA", "FAIXA_HORA", "DESC_PERIODO"],
             observed=True, dropna=False,
         ).size().reset_index(name="N")

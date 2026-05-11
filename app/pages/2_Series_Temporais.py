@@ -26,7 +26,101 @@ from lib.downloads import download_buttons
 
 apply_brand("Séries Temporais · Portal de Análise Criminal")
 header("Séries Temporais · SP-Capital",
-       "Evolução, sazonalidade, previsão e matriz hora×dia (Cidade de São Paulo)")
+       "Evolução, sazonalidade, previsão e matrizes temáticas (Cidade de São Paulo)")
+
+
+# ---------------------------------------------------------------------------
+# Helpers reutilizáveis nas matrizes temáticas
+# ---------------------------------------------------------------------------
+def _render_hora_dia(mhd_sub: pd.DataFrame, chart_key: str) -> pd.DataFrame:
+    """Heatmap Dia da Semana × Faixa Hora + tabela de percentuais.
+
+    Retorna pivot_pct (usado externamente para download). Devolve DataFrame
+    vazio quando não há dados.
+    """
+    DIAS = [
+        "1.DOMINGO", "2.SEGUNDA-FEIRA", "3.TERÇA-FEIRA",
+        "4.QUARTA-FEIRA", "5.QUINTA-FEIRA", "6.SEXTA-FEIRA", "7.SÁBADO",
+    ]
+    FAIXAS = ["00:00", "00:01–06:00", "06:01–12:00", "12:01–18:00", "18:01–23:59"]
+    pivot_cnt = (
+        mhd_sub.groupby(["FAIXA_HORA", "DIA_SEMANA"], observed=True)["N"].sum()
+        .reset_index()
+        .pivot(index="FAIXA_HORA", columns="DIA_SEMANA", values="N")
+        .reindex(index=FAIXAS, columns=DIAS).fillna(0).astype(int)
+    )
+    total = int(pivot_cnt.values.sum())
+    if total == 0:
+        st.warning("Sem dados para esta natureza após aplicar os filtros.")
+        return pd.DataFrame()
+    pivot_pct = (pivot_cnt / total * 100.0).round(2)
+    total_por_faixa = pivot_pct.sum(axis=1).round(2)
+    total_por_dia   = pivot_pct.sum(axis=0).round(2)
+    texto_pct = pivot_pct.map(lambda v: f"{v:.2f}%".replace(".", ",")).values
+    fig_hm = px.imshow(
+        pivot_pct.values,
+        x=list(pivot_pct.columns), y=list(pivot_pct.index),
+        color_continuous_scale="YlOrRd", aspect="auto",
+        labels=dict(x="Dia da semana", y="Faixa de hora", color="% do total"),
+    )
+    fig_hm.update_traces(
+        text=texto_pct, texttemplate="%{text}",
+        hovertemplate="Dia: %{x}<br>Faixa: %{y}<br>Participação: %{text}<extra></extra>",
+    )
+    fig_hm.update_layout(
+        height=420, margin=dict(l=10, r=10, t=10, b=10),
+        coloraxis_colorbar=dict(title="%"),
+    )
+    fig_hm.update_xaxes(side="top", tickangle=0)
+    st.plotly_chart(fig_hm, use_container_width=True, key=chart_key)
+    with st.expander("Tabela de percentuais (linha + coluna Total)", expanded=True):
+        tabela = pivot_pct.copy()
+        tabela["Total"] = total_por_faixa
+        tabela.loc["Total"] = list(total_por_dia) + [round(float(total_por_faixa.sum()), 2)]
+        st.dataframe(
+            tabela.map(lambda v: f"{v:.2f}%".replace(".", ",")),
+            use_container_width=True,
+        )
+    return pivot_pct
+
+
+def _render_dia_mes_heatmap(df_sub: pd.DataFrame, chart_key: str) -> None:
+    """Heatmap Dia do Mês (1-31) × Faixa Hora + tabela de contagens."""
+    FAIXAS = ["00:00", "00:01–06:00", "06:01–12:00", "12:01–18:00", "18:01–23:59"]
+    pivot = (
+        df_sub.groupby(["DIA_MES", "FAIXA_HORA"], observed=True)["N"].sum()
+        .reset_index()
+        .pivot(index="DIA_MES", columns="FAIXA_HORA", values="N")
+        .reindex(index=range(1, 32), columns=FAIXAS)
+        .fillna(0).astype(int)
+    )
+    total = int(pivot.values.sum())
+    if total == 0:
+        st.warning("Sem dados para este filtro.")
+        return
+    fig = px.imshow(
+        pivot.values,
+        x=FAIXAS,
+        y=[str(d) for d in range(1, 32)],
+        color_continuous_scale="YlOrRd",
+        aspect="auto",
+        text_auto=True,
+        labels=dict(x="Faixa de hora", y="Dia do mês", color="Ocorrências"),
+    )
+    fig.update_traces(
+        hovertemplate="Dia %{y} · %{x}<br>Ocorrências: %{z}<extra></extra>",
+    )
+    fig.update_layout(
+        height=680,
+        margin=dict(l=10, r=10, t=10, b=10),
+        coloraxis_colorbar=dict(title="N"),
+        yaxis=dict(autorange="reversed", dtick=1),
+    )
+    fig.update_xaxes(side="top")
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
+    with st.expander("Tabela de contagens brutas"):
+        pivot.index.name = "Dia"
+        st.dataframe(pivot, use_container_width=True)
 
 f = sidebar_filters()
 sidebar_footer()
@@ -225,15 +319,14 @@ elif run:
 
 # =========================================================================
 # 4) Matriz temática — Dia da Semana × Faixa Hora (× Descrição do Período)
+#    Quando ≥2 naturezas filtradas → uma aba por natureza.
 # =========================================================================
-# Lê o agregado ``matriz_hora_dia.parquet`` gerado por
-# ``pipeline/aggregate_hora_dia.py``. Esse agregado é pequeno
-# (~dezenas de KB) e cabe confortavelmente no Streamlit Cloud.
 st.divider()
 st.subheader("Matriz temática — Dia da Semana × Faixa Hora")
 st.caption(
     "Heatmap do volume de ocorrências cruzando o **dia da semana** com a "
-    "**faixa do dia** (Madrugada 0-5h · Manhã 6-11h · Tarde 12-17h · Noite 18-23h). "
+    "**faixa do dia** (00:01–06:00 · 06:01–12:00 · 12:01–18:00 · 18:01–23:59). "
+    "Quando múltiplas naturezas estão selecionadas, cada aba mostra uma natureza. "
     "Use o filtro de *Descrição do Período* (categoria da SSP) para fatiar a matriz."
 )
 
@@ -244,20 +337,9 @@ if mhd.empty:
         "`python pipeline/aggregate_hora_dia.py` depois do `run_all.py` para gerá-lo."
     )
 else:
-    # Aplica filtros globais (data, natureza, DP quando disponível).
-    # mask_dp é no-op se a matriz_hora_dia.parquet não tiver DpGeoCod
-    # (caso atual: o agregado é estadual). Fica preparada pra quando o
-    # pipeline for regerado com essa dimensão.
     m_mask = f.mask_date(mhd) & f.mask_natureza(mhd) & f.mask_dp(mhd)
     mhd_f = mhd.loc[m_mask].copy()
-    if f.dp_cod and "DpGeoCod" not in mhd.columns:
-        st.caption(
-            "⚠️ A matriz atual é **estadual** (o agregado não foi gerado com "
-            "DpGeoCod). Filtrar por DP aqui exigiria regenerar "
-            "`matriz_hora_dia.parquet` com a dimensão de delegacia."
-        )
 
-    # Filtro de DESC_PERIODO específico desta matriz (não afeta outras páginas).
     periodos = sorted(mhd_f["DESC_PERIODO"].dropna().astype(str).unique().tolist())
     sel_periodos = st.multiselect(
         "Descrição do Período (opcional — vazio = todos)",
@@ -272,92 +354,114 @@ else:
     if mhd_f.empty:
         st.warning("Sem dados na matriz após aplicar os filtros.")
     else:
-        # Ordens canônicas (mesmos rótulos gerados pelo pipeline).
-        DIAS = [
-            "1.DOMINGO", "2.SEGUNDA-FEIRA", "3.TERÇA-FEIRA",
-            "4.QUARTA-FEIRA", "5.QUINTA-FEIRA", "6.SEXTA-FEIRA", "7.SÁBADO",
-        ]
-        FAIXAS = [
-            "00:00", "00:01–06:00", "06:01–12:00", "12:01–18:00", "18:01–23:59",
-        ]
+        # Naturezas presentes no subconjunto filtrado (preserva ordem da seleção).
+        nats_mhd = [n for n in (f.naturezas or []) if n in mhd_f["NATUREZA_APURADA"].unique()]
 
-        # Pivot em contagem bruta (FAIXA em linha, DIA em coluna — espelha o
-        # layout pedido pelo cliente, que inverte a matriz anterior).
-        pivot_cnt = (
-            mhd_f.groupby(["FAIXA_HORA", "DIA_SEMANA"], observed=True)["N"].sum()
-            .reset_index()
-            .pivot(index="FAIXA_HORA", columns="DIA_SEMANA", values="N")
-            .reindex(index=FAIXAS, columns=DIAS)
-            .fillna(0).astype(int)
-        )
+        if len(nats_mhd) >= 2:
+            # Uma aba por natureza
+            tabs_hd = st.tabs([n[:45] for n in nats_mhd])
+            all_pivots: dict[str, pd.DataFrame] = {}
+            for tab, nat in zip(tabs_hd, nats_mhd):
+                with tab:
+                    pv = _render_hora_dia(
+                        mhd_f[mhd_f["NATUREZA_APURADA"] == nat],
+                        chart_key=f"hd_{nat}",
+                    )
+                    if not pv.empty:
+                        all_pivots[nat] = pv
+        else:
+            pv = _render_hora_dia(mhd_f, chart_key="hd_all")
+            all_pivots = {"total": pv} if not pv.empty else {}
 
-        # Normalização para percentual sobre o GRAND TOTAL da matriz
-        # (soma de todas as células) — é o que a imagem de referência traz.
-        total = int(pivot_cnt.values.sum())
-        if total == 0:
-            st.warning("Sem dados na matriz após aplicar os filtros.")
-            st.stop()
-        pivot_pct = (pivot_cnt / total * 100.0).round(2)
-
-        # Totais marginais (linha e coluna) em %.
-        total_por_faixa = pivot_pct.sum(axis=1).round(2)
-        total_por_dia   = pivot_pct.sum(axis=0).round(2)
-
-        # Heatmap com valores exibidos como "0,03%".
-        # Passamos `text` explicitamente pra formatar com vírgula decimal.
-        texto_pct = pivot_pct.map(
-            lambda v: f"{v:.2f}%".replace(".", ",")
-        ).values
-        fig_hm = px.imshow(
-            pivot_pct.values,
-            x=list(pivot_pct.columns), y=list(pivot_pct.index),
-            color_continuous_scale="YlOrRd",
-            aspect="auto",
-            labels=dict(x="Dia da semana", y="Faixa de hora", color="% do total"),
-        )
-        fig_hm.update_traces(
-            text=texto_pct,
-            texttemplate="%{text}",
-            hovertemplate=(
-                "Dia: %{x}<br>Faixa: %{y}<br>"
-                "Participação: %{text}<extra></extra>"
-            ),
-        )
-        fig_hm.update_layout(
-            height=420, margin=dict(l=10, r=10, t=10, b=10),
-            coloraxis_colorbar=dict(title="%"),
-        )
-        fig_hm.update_xaxes(side="top", tickangle=0)
-        st.plotly_chart(fig_hm, use_container_width=True)
-
-        # Tabela formatada igual ao mock: faixa em linha, dia em coluna,
-        # última coluna "Total" por faixa e última linha "Total" por dia.
-        with st.expander("Tabela de percentuais (linha + coluna Total)", expanded=True):
-            tabela = pivot_pct.copy()
-            tabela["Total"] = total_por_faixa
-            tabela.loc["Total"] = list(total_por_dia) + [round(total_por_faixa.sum(), 2)]
-            # Formata tudo como string "X,XX%"
-            tabela_fmt = tabela.map(lambda v: f"{v:.2f}%".replace(".", ","))
-            st.dataframe(tabela_fmt, use_container_width=True)
-
-        # Tabela detalhada por DESC_PERIODO (mantida pra análise mais funda).
+        # Expander com dados brutos por DESC_PERIODO (todas as naturezas)
         with st.expander("Matriz por Descrição do Período (contagens brutas)"):
+            _DIAS_ORD = [
+                "1.DOMINGO", "2.SEGUNDA-FEIRA", "3.TERÇA-FEIRA",
+                "4.QUARTA-FEIRA", "5.QUINTA-FEIRA", "6.SEXTA-FEIRA", "7.SÁBADO",
+            ]
+            _FAIXAS_ORD = ["00:00", "00:01–06:00", "06:01–12:00", "12:01–18:00", "18:01–23:59"]
             facet = (
                 mhd_f.groupby(["DESC_PERIODO", "FAIXA_HORA", "DIA_SEMANA"],
                               observed=True)["N"].sum().reset_index()
             )
-            facet["DIA_SEMANA"] = pd.Categorical(facet["DIA_SEMANA"], DIAS, ordered=True)
-            facet["FAIXA_HORA"] = pd.Categorical(facet["FAIXA_HORA"], FAIXAS, ordered=True)
-            facet = facet.sort_values(["DESC_PERIODO", "FAIXA_HORA", "DIA_SEMANA"])
-            st.dataframe(facet, use_container_width=True)
+            facet["DIA_SEMANA"] = pd.Categorical(facet["DIA_SEMANA"], _DIAS_ORD, ordered=True)
+            facet["FAIXA_HORA"] = pd.Categorical(facet["FAIXA_HORA"], _FAIXAS_ORD, ordered=True)
+            st.dataframe(
+                facet.sort_values(["DESC_PERIODO", "FAIXA_HORA", "DIA_SEMANA"]),
+                use_container_width=True,
+            )
 
-        download_buttons(
-            pivot_pct.reset_index(),
-            basename="matriz_hora_dia_pct",
-            meta={
-                "data_inicio": str(f.data_ini), "data_fim": str(f.data_fim),
-                "naturezas": ", ".join(f.naturezas) if f.naturezas else "todas",
-                "periodos_desc": ", ".join(sel_periodos) if sel_periodos else "todos",
-                "total_ocorrencias_base": str(total),
-            },
-        )
+        if all_pivots:
+            download_buttons(
+                next(iter(all_pivots.values())).reset_index(),
+                basename="matriz_hora_dia_pct",
+                meta={
+                    "data_inicio": str(f.data_ini), "data_fim": str(f.data_fim),
+                    "naturezas": ", ".join(f.naturezas) if f.naturezas else "todas",
+                    "periodos_desc": ", ".join(sel_periodos) if sel_periodos else "todos",
+                },
+            )
+
+
+# =========================================================================
+# 5) Matriz temática — Ocorrências por Dia do Mês  (controle deslizante)
+#    Quando ≥2 naturezas filtradas → uma aba por natureza.
+# =========================================================================
+st.divider()
+st.subheader("Matriz temática — Dia do Mês × Faixa Hora")
+st.caption(
+    "Heatmap cruzando o **dia do mês** (1–31) com a **faixa horária**, "
+    "mostrando a contagem bruta de ocorrências em cada célula. "
+    "Use o controle deslizante para navegar entre os meses do período filtrado. "
+    "Quando múltiplas naturezas estão selecionadas, cada aba mostra uma natureza. "
+    "Requer `dia_mes.parquet` — rode `python pipeline/aggregate_dia_mes.py`."
+)
+
+dm_raw = data.dia_mes()
+if dm_raw.empty:
+    st.info(
+        "ℹ️ Agregado `dia_mes.parquet` não encontrado. Rode "
+        "`python pipeline/aggregate_dia_mes.py` depois do `run_all.py` para gerá-lo."
+    )
+else:
+    dm_mask = f.mask_date(dm_raw) & f.mask_natureza(dm_raw) & f.mask_dp(dm_raw)
+    dm_f = dm_raw.loc[dm_mask].copy()
+
+    if dm_f.empty:
+        st.warning("Sem dados após aplicar os filtros.")
+    else:
+        meses_disp = sorted(set(
+            zip(dm_f["ANO"].astype(int), dm_f["MES"].astype(int))
+        ))
+        mes_labels = [f"{m:02d}/{a}" for a, m in meses_disp]
+
+        if len(meses_disp) == 1:
+            sel_label = mes_labels[0]
+            st.caption(f"Mês: **{sel_label}**")
+        else:
+            sel_label = st.select_slider(
+                "Mês",
+                options=mes_labels,
+                value=mes_labels[-1],
+                key="dm_mes_slider",
+            )
+
+        sel_idx   = mes_labels.index(sel_label)
+        sel_ano, sel_mes_num = meses_disp[sel_idx]
+        dm_mes = dm_f[
+            (dm_f["ANO"].astype(int) == sel_ano)
+            & (dm_f["MES"].astype(int) == sel_mes_num)
+        ]
+
+        nats_dm = [n for n in (f.naturezas or []) if n in dm_mes["NATUREZA_APURADA"].unique()]
+
+        if len(nats_dm) >= 2:
+            tabs_dm = st.tabs([n[:45] for n in nats_dm])
+            for tab, nat in zip(tabs_dm, nats_dm):
+                with tab:
+                    _render_dia_mes_heatmap(
+                        dm_mes[dm_mes["NATUREZA_APURADA"] == nat],
+                        chart_key=f"dm_{nat}_{sel_label}",
+                    )
+        else:
+            _render_dia_mes_heatmap(dm_mes, chart_key=f"dm_all_{sel_label}")

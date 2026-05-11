@@ -324,6 +324,16 @@ def matriz_hora_dia() -> pd.DataFrame:
     return df
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def dia_mes() -> pd.DataFrame:
+    """Agregado ANO × MES × DIA_MES (1-31) × Natureza × DpGeoCod.
+
+    Gerado por ``pipeline/aggregate_dia_mes.py``. Devolve DataFrame vazio
+    enquanto o arquivo não existir.
+    """
+    return _safe_read(AGG / "dia_mes.parquet")
+
+
 @st.cache_data(ttl=3600)
 def naturezas_disponiveis() -> list[str]:
     df = _safe_read(AGG / "cubo_natureza.parquet")
