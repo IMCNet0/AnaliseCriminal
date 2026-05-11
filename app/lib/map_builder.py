@@ -524,11 +524,21 @@ def _inject_zoom_gate(fmap: folium.Map, layer, min_zoom: int) -> None:
     gate.add_to(fmap)
 
 
-def _add_hotspot(fmap: folium.Map, pts: pd.DataFrame) -> None:
-    """Mapa de calor com parâmetros calibrados pra VISIBILIDADE EM ZOOM BAIXO.
+def _add_hotspot(
+    fmap: folium.Map,
+    pts: pd.DataFrame,
+    radius: int = 28,
+    blur: int = 35,
+    min_opacity: float = 0.55,
+    max_zoom: int = 13,
+) -> None:
+    """Mapa de calor configurável.
 
-    ``maxZoom`` alto mantém o calor aceso em zoom estadual; ``radius`` e
-    ``blur`` mais agressivos espalham o sinal no nível 6-8.
+    Args:
+        radius:      Raio em pixels de cada ponto (maior = manchas mais largas).
+        blur:        Suavização da mancha (maior = transições mais suaves).
+        min_opacity: Opacidade mínima (maior = áreas esparsas mais visíveis).
+        max_zoom:    Zoom a partir do qual o heat satura (para de intensificar).
     """
     data = pts[["LATITUDE", "LONGITUDE"]].dropna().to_numpy().tolist()
     if not data:
@@ -536,10 +546,10 @@ def _add_hotspot(fmap: folium.Map, pts: pd.DataFrame) -> None:
     HeatMap(
         data=data,
         name="🔥 Hotspot",
-        radius=28,          # ↑ (era 14): mancha maior pra ler em zoom baixo
-        blur=35,            # ↑ (era 20): suaviza, mantém o heat contínuo
-        min_opacity=0.55,   # ↑ (era 0.3): garante contraste sobre o basemap claro
-        max_zoom=13,        # ↑ faz o heat "intensificar" até zoom 13 antes de saturar
+        radius=radius,
+        blur=blur,
+        min_opacity=min_opacity,
+        max_zoom=max_zoom,
         gradient={
             0.2: "#2c7bb6",
             0.4: "#abd9e9",
@@ -579,6 +589,10 @@ def build_map(
     points_min_zoom: int = 6,
     fit_bounds: Optional[tuple[float, float, float, float]] = None,
     with_draw_tools: bool = False,
+    hotspot_radius: int = 28,
+    hotspot_blur: int = 35,
+    hotspot_min_opacity: float = 0.55,
+    hotspot_max_zoom: int = 13,
 ) -> folium.Map:
     """Constrói o mapa único usado na Home.
 
@@ -629,7 +643,13 @@ def build_map(
             min_visible_zoom=points_min_zoom, periodo_label=pts_data.periodo_label,
         )
     elif modo == "hotspot" and pts_data is not None and not pts_data.df.empty:
-        _add_hotspot(fmap, pts_data.df)
+        _add_hotspot(
+            fmap, pts_data.df,
+            radius=hotspot_radius,
+            blur=hotspot_blur,
+            min_opacity=hotspot_min_opacity,
+            max_zoom=hotspot_max_zoom,
+        )
 
     # --- Pin do endereço pesquisado ---
     if endereco_marker:

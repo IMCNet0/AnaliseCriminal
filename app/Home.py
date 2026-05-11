@@ -219,6 +219,40 @@ with ctrl_b:
     endereco_marker = st.session_state.get("_endereco_marker")
 
 
+# ── Controles do Hotspot (visíveis apenas quando o modo Hotspot está ativo) ──
+if MODE == "hotspot":
+    with st.expander("⚙️ Parâmetros do Hotspot", expanded=True):
+        hs_c1, hs_c2, hs_c3, hs_c4 = st.columns(4)
+        hs_radius = hs_c1.slider(
+            "Raio (px)", min_value=5, max_value=60, value=28, step=1,
+            key="hs_radius",
+            help="Raio de influência de cada ponto em pixels. "
+                 "Maior → manchas mais largas.",
+        )
+        hs_blur = hs_c2.slider(
+            "Blur (px)", min_value=5, max_value=60, value=35, step=1,
+            key="hs_blur",
+            help="Grau de suavização. Maior → transições mais suaves entre quente e frio.",
+        )
+        hs_min_opacity = hs_c3.slider(
+            "Opacidade mín.", min_value=0.10, max_value=1.0, value=0.55, step=0.05,
+            key="hs_min_opacity",
+            help="Opacidade mínima da camada. "
+                 "Maior → áreas com poucas ocorrências ficam mais visíveis.",
+        )
+        hs_max_zoom = hs_c4.slider(
+            "Zoom de saturação", min_value=8, max_value=18, value=13, step=1,
+            key="hs_max_zoom",
+            help="Nível de zoom a partir do qual o calor para de intensificar. "
+                 "Menor → satura mais cedo (zoom baixo); maior → mantém gradiente até zoom alto.",
+        )
+else:
+    hs_radius = int(st.session_state.get("hs_radius", 28))
+    hs_blur = int(st.session_state.get("hs_blur", 35))
+    hs_min_opacity = float(st.session_state.get("hs_min_opacity", 0.55))
+    hs_max_zoom = int(st.session_state.get("hs_max_zoom", 13))
+
+
 # =========================================================================
 # 4) Pipeline de dados — só se houver natureza definida na sidebar
 # =========================================================================
@@ -383,11 +417,15 @@ fmap = build_map(
     choro_data=choro_data,
     center=st.session_state.map_center,
     zoom=st.session_state.map_zoom,
-    with_pmesp_labels=False,     # rótulos suprimidos em definitivo
+    with_pmesp_labels=False,
     endereco_marker=endereco_marker,
     points_min_zoom=6,
-    fit_bounds=dp_bounds,        # enquadra a DP quando selecionada; senão None
-    with_draw_tools=True,        # ferramenta laço (polígono/retângulo/círculo)
+    fit_bounds=dp_bounds,
+    with_draw_tools=True,
+    hotspot_radius=hs_radius,
+    hotspot_blur=hs_blur,
+    hotspot_min_opacity=hs_min_opacity,
+    hotspot_max_zoom=hs_max_zoom,
 )
 
 ret = st_folium(
