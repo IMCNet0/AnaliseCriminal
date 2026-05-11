@@ -51,7 +51,7 @@ def apply_brand(page_title: str | None = None, layout: str = "wide") -> dict:
         page_title=page_title or brand["name"],
         page_icon=brand.get("logo_path") or "🛡️",
         layout=layout,
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="auto",
     )
 
     # --- Logo ACIMA do menu de navegação: API nativa st.logo() ---
@@ -116,13 +116,63 @@ def apply_brand(page_title: str | None = None, layout: str = "wide") -> dict:
             max-width: 100% !important; width: 100% !important;
         }}
         a, a:visited {{color: var(--accent);}}
-        /* Botão de recolher/expandir sidebar — centralizado verticalmente na borda */
+        /* Botão de recolher/expandir sidebar — centralizado verticalmente na borda (desktop) */
         [data-testid="stSidebarCollapseButton"],
         [data-testid="collapsedControl"] {{
             position: fixed !important;
             top: 50% !important;
             bottom: auto !important;
             transform: translateY(-50%) !important;
+        }}
+        /* ── Mobile: FAB no canto inferior esquerdo ───────────────────────── */
+        @media (max-width: 768px) {{
+            /* FAB — substitui o botão de sidebar por ícone flutuante */
+            [data-testid="stSidebarCollapseButton"],
+            [data-testid="collapsedControl"] {{
+                bottom: 1.25rem !important;
+                left: 1.25rem !important;
+                top: auto !important;
+                transform: none !important;
+                width: 54px !important;
+                height: 54px !important;
+                min-width: 54px !important;
+                border-radius: 50% !important;
+                background-color: {brand["accent_color"]} !important;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.30) !important;
+                z-index: 99999 !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                border: none !important;
+            }}
+            /* Ícone (SVG chevron) fica branco sobre o fundo verde */
+            [data-testid="stSidebarCollapseButton"] svg,
+            [data-testid="collapsedControl"] svg {{
+                fill: white !important;
+                color: white !important;
+                stroke: white !important;
+            }}
+            /* Sidebar como drawer overlay — cobre a tela, por cima do conteúdo */
+            section[data-testid="stSidebar"] {{
+                position: fixed !important;
+                z-index: 99998 !important;
+                height: 100dvh !important;
+                box-shadow: 4px 0 24px rgba(0,0,0,0.18) !important;
+            }}
+            /* Conteúdo principal: sem padding lateral excessivo no celular */
+            .block-container {{
+                padding-left: 0.5rem !important;
+                padding-right: 0.5rem !important;
+                padding-bottom: 5rem !important;   /* evita FAB cobrir conteúdo no fim */
+                max-width: 100% !important;
+            }}
+            /* Títulos mais compactos */
+            .page-title h1 {{ font-size: 1.3rem !important; }}
+            .page-title .page-subtitle {{ font-size: 0.85rem !important; }}
+            /* Métricas mais compactas */
+            .stMetric {{
+                padding: 0.5rem 0.65rem !important;
+            }}
         }}
         /* Título de página compacto (a área superior fica livre). */
         .page-title h1 {{margin: 0 0 .15rem 0; font-size: 1.9rem; line-height: 1.1;}}
