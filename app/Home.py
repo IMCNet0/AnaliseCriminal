@@ -289,42 +289,8 @@ if tem_natureza and MODE in ("pontos", "hotspot"):
 
     pts_data = PointsData(df=pts, periodo_label=periodo_label)
 
-    # Total REAL (sem amostragem) vindo dos agregados — pra explicar o gap
-    # entre o que o mapa mostra (amostra) e a contagem oficial SSP.
+    # Total REAL (sem amostragem) vindo dos agregados — exibido abaixo do mapa.
     total_real = int(serie_f["N"].sum())
-
-    info_col = st.columns(1)[0]
-    if not pts.empty:
-        amostra_pct = (len(pts) / total_real * 100.0) if total_real else 0.0
-        if MODE == "pontos":
-            info_col.caption(
-                f"📍 {len(pts):,} ponto(s) exibido(s) em {periodo_label} — "
-                f"**amostra** representativa de **{total_real:,}** ocorrências "
-                f"oficiais (≈ {amostra_pct:.1f}%). "
-                f"Pontos visíveis a partir do zoom 6."
-            )
-        else:
-            info_col.caption(
-                f"🔥 {len(pts):,} ponto(s) compondo o calor — **amostra** de "
-                f"{total_real:,} ocorrências oficiais no período. "
-                f"Padrão espacial é preservado pela amostragem uniforme "
-                f"(seed fixa)."
-            )
-        info_col.info(
-            "ℹ️ **Por que amostra?** A base completa tem ~600 MB e só cabe na "
-            "máquina local. Para rodar no Streamlit Cloud, usamos uma amostra "
-            "aleatória (até 5.000 pontos/ANO×MES · seed 42 · "
-            "`pipeline/build_sample.py`). **Totais e KPIs acima vêm dos "
-            "agregados — são os números reais da SSP-SP**. Use o recorte "
-            "coroplético (Delegacia / Setor) quando precisar de contagem "
-            "exata espacialmente.",
-            icon="ℹ️",
-        )
-    else:
-        info_col.info(
-            f"Sem pontos com coordenadas válidas em {periodo_label} "
-            f"para as naturezas selecionadas."
-        )
 
 if tem_natureza and MODE == "choropleth":
     recorte_choro = f.recorte  # só DP ou Setor (filtros.RECORTES enxuto)
@@ -441,6 +407,41 @@ if ret:
     c = ret.get("center")
     if c and "lat" in c and "lng" in c:
         st.session_state.map_center = (float(c["lat"]), float(c["lng"]))
+
+# ── Aviso de amostra — exibido abaixo do mapa ──────────────────────────────
+if pts_data is not None:
+    pts = pts_data.df
+    if not pts.empty:
+        amostra_pct = (len(pts) / total_real * 100.0) if total_real else 0.0
+        if MODE == "pontos":
+            st.caption(
+                f"📍 {len(pts):,} ponto(s) exibido(s) em {periodo_label} — "
+                f"**amostra** representativa de **{total_real:,}** ocorrências "
+                f"oficiais (≈ {amostra_pct:.1f}%). "
+                f"Pontos visíveis a partir do zoom 6."
+            )
+        else:
+            st.caption(
+                f"🔥 {len(pts):,} ponto(s) compondo o calor — **amostra** de "
+                f"{total_real:,} ocorrências oficiais no período. "
+                f"Padrão espacial é preservado pela amostragem uniforme "
+                f"(seed fixa)."
+            )
+        st.info(
+            "ℹ️ **Por que amostra?** A base completa tem ~600 MB e só cabe na "
+            "máquina local. Para rodar no Streamlit Cloud, usamos uma amostra "
+            "aleatória (até 5.000 pontos/ANO×MES · seed 42 · "
+            "`pipeline/build_sample.py`). **Totais e KPIs acima vêm dos "
+            "agregados — são os números reais da SSP-SP**. Use o recorte "
+            "coroplético (Delegacia / Setor) quando precisar de contagem "
+            "exata espacialmente.",
+            icon="ℹ️",
+        )
+    else:
+        st.info(
+            f"Sem pontos com coordenadas válidas em {periodo_label} "
+            f"para as naturezas selecionadas."
+        )
 
 # ---------------------------------------------------------------------------
 # Ferramenta laço — análise de ocorrências dentro da forma desenhada
