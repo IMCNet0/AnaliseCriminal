@@ -54,11 +54,9 @@ def gather(f: GlobalFilters) -> dict:
     total_ultimo_ano = int(serie_f.loc[serie_f["ANO"] == ultimo_ano, "N"].sum()) if not serie_f.empty else 0
     anos_unicos = sorted(serie_f["ANO"].unique().tolist()) if not serie_f.empty else []
 
-    if len(anos_unicos) >= 2:
-        prev_n = int(serie_f.loc[serie_f["ANO"] == anos_unicos[-2], "N"].sum())
-        delta_yoy = (total_ultimo_ano - prev_n) / prev_n * 100 if prev_n else 0.0
-    else:
-        delta_yoy = 0.0
+    # delta_yoy calculado após yoy_df (usa prev_year_window — mesmo período ano anterior)
+    delta_yoy = 0.0
+    total_periodo_anterior = 0
 
     # Ranking de naturezas
     if not serie_f.empty and "NATUREZA_APURADA" in serie_f.columns:
@@ -97,6 +95,11 @@ def gather(f: GlobalFilters) -> dict:
             / yoy_df["anterior"].replace(0, pd.NA) * 100
         )
         yoy_df = yoy_df.reset_index().sort_values("atual", ascending=False).head(10)
+        # delta_yoy correto: período atual vs mesmo período no ano anterior
+        curr_sum = int(tot_curr.sum())
+        prev_sum = int(tot_prev.sum())
+        delta_yoy = (curr_sum - prev_sum) / prev_sum * 100 if prev_sum > 0 else 0.0
+        total_periodo_anterior = prev_sum
     else:
         yoy_df = pd.DataFrame()
 
@@ -139,9 +142,21 @@ def gather(f: GlobalFilters) -> dict:
     mhd_raw = _data.matriz_hora_dia()
     if not mhd_raw.empty:
         mhd_mask = f.mask_date(mhd_raw) & f.mask_natureza(mhd_raw)
+        if f.dp_cod:
+            mhd_mask &= f.mask_dp(mhd_raw)
         mhd_f = mhd_raw.loc[mhd_mask].copy()
     else:
         mhd_f = pd.DataFrame()
+
+    # Matriz dia do mês × faixa hora
+    dm_raw = _data.dia_mes()
+    if not dm_raw.empty:
+        dm_mask = f.mask_date(dm_raw) & f.mask_natureza(dm_raw)
+        if f.dp_cod:
+            dm_mask &= f.mask_dp(dm_raw)
+        dia_mes_f = dm_raw.loc[dm_mask].copy()
+    else:
+        dia_mes_f = pd.DataFrame()
 
     # Evolução anual (totais por ano)
     evol_anual = pd.DataFrame()
@@ -162,6 +177,7 @@ def gather(f: GlobalFilters) -> dict:
         "serie_f": serie_f,
         "serie_total": serie_total,
         "total_periodo": total_periodo,
+        "total_periodo_anterior": total_periodo_anterior,
         "total_ultimo_ano": total_ultimo_ano,
         "ultimo_ano": ultimo_ano,
         "delta_yoy": delta_yoy,
@@ -174,6 +190,7 @@ def gather(f: GlobalFilters) -> dict:
         "pontos_f": pontos_f,
         "dp_map_center": dp_map_center,
         "mhd_f": mhd_f,
+        "dia_mes_f": dia_mes_f,
         "evol_anual": evol_anual,
         "d_prev_ini": d_prev_ini,
         "d_prev_fim": d_prev_fim,
@@ -580,19 +597,30 @@ def _insights_rules(d: dict) -> str:
     blocos.append(p1)
 
     # Parágrafo 2 — tendência YoY
-    if delta != 0.0 and d["total_ultimo_ano"] > 0:
+    total_anterior = d.get("total_periodo_anterior", 0)
+    d_prev_ini = d.get("d_prev_ini")
+    d_prev_fim = d.get("d_prev_fim")
+    if total_anterior > 0:
         dir_str = "elevação" if delta > 0 else "redução"
         sinal_emoji = "⚠️" if delta > 10 else ("✅" if delta < -5 else "➡️")
+        periodo_anterior_label = (
+            f"{d_prev_ini.strftime('%d/%m/%Y')} a {d_prev_fim.strftime('%d/%m/%Y')}"
+            if d_prev_ini and d_prev_fim else "mesmo período do ano anterior"
+        )
         p2 = (
-            f"{sinal_emoji} Em **{d['ultimo_ano']}**, o total registrado foi de "
-            f"**{d['total_ultimo_ano']:,}** ocorrências, representando uma {dir_str} de "
-            f"**{abs(delta):.1f}%** em relação ao mesmo período do ano anterior."
+            f"{sinal_emoji} No período analisado foram registradas **{total:,}** ocorrências, "
+            f"representando uma {dir_str} de **{abs(delta):.1f}%** em relação ao período "
+            f"equivalente anterior ({periodo_anterior_label}, **{total_anterior:,}** ocorrências)."
             .replace(",", ".")
         )
         if delta > 15:
-            p2 += " Variação expressiva que merece atenção operacional."
+            p2 += " Variação expressiva que merece atenção operacional prioritária."
+        elif delta > 5:
+            p2 += " Variação moderada de alta que requer monitoramento contínuo."
         elif delta < -10:
             p2 += " Variação favorável, indicando possível resultado positivo das ações preventivas."
+        elif delta < -3:
+            p2 += " Leve redução, tendência a ser confirmada nos próximos meses."
         blocos.append(p2)
 
     # Parágrafo 3 — naturezas predominantes
@@ -639,20 +667,41 @@ def _insights_rules(d: dict) -> str:
         dia_tot = mhd_f.groupby("DIA_SEMANA", observed=True)["N"].sum()
         pico_faixa = faixa_tot.idxmax()
         pico_dia = dia_tot.idxmax()
-        # "6.SEXTA-FEIRA" → "Sexta-Feira"  |  "1.DOMINGO" → "Domingo"
         pico_dia_label = (
             str(pico_dia).split(".", 1)[-1].replace("-", " ").title()
             if "." in str(pico_dia) else str(pico_dia)
         )
         pct_faixa = faixa_tot[pico_faixa] / faixa_tot.sum() * 100 if faixa_tot.sum() > 0 else 0
+        # Segunda faixa mais crítica
+        faixa_ord = faixa_tot.sort_values(ascending=False)
+        segunda_faixa = faixa_ord.index[1] if len(faixa_ord) > 1 else ""
+        pct_segunda = faixa_ord.iloc[1] / faixa_tot.sum() * 100 if len(faixa_ord) > 1 else 0
         p5 = (
             f"A análise temporal revela maior concentração de ocorrências na faixa "
-            f"**{pico_faixa}** ({pct_faixa:.1f}% dos registros) e no dia "
-            f"**{pico_dia_label}**. "
+            f"**{pico_faixa}** ({pct_faixa:.1f}% dos registros)"
+        )
+        if segunda_faixa:
+            p5 += f", seguida por **{segunda_faixa}** ({pct_segunda:.1f}%)"
+        p5 += (
+            f", com maior incidência às **{pico_dia_label}s**. "
             "Esses padrões podem subsidiar o planejamento de rondas e reforço de efetivo "
             "nos horários e dias de maior incidência."
         )
         blocos.append(p5)
+
+    # Parágrafo 5b — pico por dia do mês
+    dia_mes_f = d.get("dia_mes_f")
+    if dia_mes_f is not None and not dia_mes_f.empty and "DIA_MES" in dia_mes_f.columns:
+        dm_tot = dia_mes_f.groupby("DIA_MES")["N"].sum()
+        if not dm_tot.empty:
+            pico_dm = int(dm_tot.idxmax())
+            pct_dm = dm_tot[pico_dm] / dm_tot.sum() * 100 if dm_tot.sum() > 0 else 0
+            p5b = (
+                f"Em relação à distribuição por dia do mês, o dia **{pico_dm}** apresenta "
+                f"o maior volume (**{int(dm_tot[pico_dm]):,}** ocorrências, {pct_dm:.1f}% do total). "
+                "Esse dado pode orientar o planejamento mensal de reforço operacional."
+            )
+            blocos.append(p5b)
 
     # Parágrafo 6 — observação de uso
     blocos.append(
@@ -667,20 +716,46 @@ def _insights_rules(d: dict) -> str:
 def _build_insights_prompt(d: dict) -> str:
     """Monta o prompt analítico compartilhado por Claude e Gemini."""
     f = d["filtros"]
+    d_prev_ini = d["d_prev_ini"]
+    d_prev_fim = d["d_prev_fim"]
     escopo = f"Delegacia {f.dp_des}" if f.dp_cod else "SP-Capital (toda a cidade)"
 
+    # --- Top 10 naturezas -------------------------------------------------------
     nat_str = "\n".join(
         f"  {i+1}. {r['NATUREZA_APURADA']}: {int(r['N']):,} ocorrencias"
         for i, (_, r) in enumerate(d["nat_counts"].head(10).iterrows())
     ) if not d["nat_counts"].empty else "  (sem dados)"
 
+    # --- Top 5 DPs (só quando sem filtro de DP) ---------------------------------
     dp_str = ""
     if not d["dp_rank"].empty and not f.dp_cod:
-        dp_str = "\nTop 5 Delegacias:\n" + "\n".join(
+        dp_str = "\nTop 5 Delegacias com maior volume:\n" + "\n".join(
             f"  {i+1}. {r['DpGeoDes']}: {int(r['N']):,}"
             for i, (_, r) in enumerate(d["dp_rank"].head(5).iterrows())
         )
 
+    # --- Comparativo YoY por natureza (top 5) -----------------------------------
+    yoy_str = ""
+    if not d["yoy_df"].empty and d["total_periodo_anterior"] > 0:
+        linhas = []
+        for _, row in d["yoy_df"].head(5).iterrows():
+            var = row.get("variacao_pct", float("nan"))
+            if pd.isna(var):
+                var_str = "nova natureza"
+            else:
+                var_str = f"{var:+.1f}%"
+            linhas.append(
+                f"  {row['NATUREZA_APURADA']}: {int(row['atual']):,} atual"
+                f" vs {int(row['anterior']):,} anterior ({var_str})"
+            )
+        yoy_str = (
+            f"\nComparativo por natureza"
+            f" ({f.data_ini.strftime('%d/%m/%Y')}-{f.data_fim.strftime('%d/%m/%Y')}"
+            f" vs {d_prev_ini.strftime('%d/%m/%Y')}-{d_prev_fim.strftime('%d/%m/%Y')}):\n"
+            + "\n".join(linhas)
+        )
+
+    # --- Padrão hora × dia -------------------------------------------------------
     mhd_str = "  Dados de hora/dia nao disponiveis para este filtro."
     if not d["mhd_f"].empty and {"FAIXA_HORA", "DIA_SEMANA", "N"}.issubset(d["mhd_f"].columns):
         faixa_tot = d["mhd_f"].groupby("FAIXA_HORA", observed=True)["N"].sum()
@@ -691,33 +766,78 @@ def _build_insights_prompt(d: dict) -> str:
             str(pico_dia).split(".", 1)[-1].replace("-", " ").title()
             if "." in str(pico_dia) else str(pico_dia)
         )
-        pct_faixa = faixa_tot[pico_faixa] / faixa_tot.sum() * 100
-        mhd_str = f"Maior concentracao: faixa {pico_faixa} ({pct_faixa:.1f}%), dia {pico_dia_label}."
+        pct_faixa = faixa_tot[pico_faixa] / faixa_tot.sum() * 100 if faixa_tot.sum() > 0 else 0
+        # Distribuição completa por faixa
+        faixas_detalhe = "  ".join(
+            f"{faixa}: {int(n):,} ({n/faixa_tot.sum()*100:.1f}%)"
+            for faixa, n in faixa_tot.sort_index().items()
+        )
+        mhd_str = (
+            f"Pico: faixa {pico_faixa} ({pct_faixa:.1f}%), dia {pico_dia_label}.\n"
+            f"  Distribuicao por faixa: {faixas_detalhe}"
+        )
 
-    return f"""Voce e um analista senior de seguranca publica do Estado de Sao Paulo. \
-Analise os dados criminais abaixo e produza um texto analitico em **4 a 5 paragrafos**, \
-escrito em portugues formal e objetivo, adequado para um relatorio institucional da SSP-SP.
+    # --- Pico por dia do mês -----------------------------------------------------
+    dm_str = ""
+    if d.get("dia_mes_f") is not None and not d["dia_mes_f"].empty:
+        dm_tot = d["dia_mes_f"].groupby("DIA_MES")["N"].sum()
+        if not dm_tot.empty:
+            pico_dm = int(dm_tot.idxmax())
+            pct_dm = dm_tot[pico_dm] / dm_tot.sum() * 100 if dm_tot.sum() > 0 else 0
+            dm_str = f"\nPico por dia do mes: dia {pico_dm} ({int(dm_tot[pico_dm]):,} ocorrencias, {pct_dm:.1f}% do total)."
 
-O texto deve:
-- Citar numeros especificos (evite generalizacoes)
-- Identificar tendencias e padroes relevantes
-- Apontar pontos de atencao operacional
-- Concluir com observacoes sobre padroes temporais (se disponiveis)
-- Usar negrito (**texto**) para destacar valores-chave
+    # --- Tendência dos últimos meses ---------------------------------------------
+    trend_str = ""
+    if not d["serie_total"].empty and len(d["serie_total"]) >= 2:
+        ultimos = d["serie_total"].tail(4)
+        linhas_t = [
+            f"  {str(row['DATA'])[:7]}: {int(row['N']):,} ocorrencias"
+            for _, row in ultimos.iterrows()
+        ]
+        trend_str = "\nEvolucao recente (ultimos meses no periodo):\n" + "\n".join(linhas_t)
 
-DADOS:
-Periodo: {f.data_ini.strftime('%d/%m/%Y')} a {f.data_fim.strftime('%d/%m/%Y')}
-Escopo: {escopo}
+    # --- Variação total ----------------------------------------------------------
+    if d["total_periodo_anterior"] > 0:
+        delta_label = (
+            f"{d['delta_yoy']:+.1f}% em relacao ao mesmo periodo do ano anterior"
+            f" ({d['total_periodo_anterior']:,} ocorrencias de"
+            f" {d_prev_ini.strftime('%d/%m/%Y')} a {d_prev_fim.strftime('%d/%m/%Y')})"
+        )
+    else:
+        delta_label = "sem periodo anterior disponivel para comparacao"
+
+    return f"""Voce e um analista senior de seguranca publica do Estado de Sao Paulo, \
+especializado em inteligencia policial e gestao estrategica de recursos. \
+Analise os dados criminais abaixo e produza um texto analitico em **5 a 6 paragrafos**, \
+escrito em portugues formal e objetivo, adequado para um relatorio institucional da SSP-SP \
+destinado a gestores e delegados.
+
+O texto deve obrigatoriamente:
+1. Contextualizar o volume total e a variacao percentual em relacao ao mesmo periodo do ano anterior
+2. Destacar as naturezas criminais dominantes com percentuais sobre o total
+3. Identificar naturezas em crescimento acelerado ou queda relevante (usar tabela YoY se disponivel)
+4. Analisar o padrao temporal (faixa de hora e dia da semana de maior incidencia)
+5. Se disponivel, mencionar o pico por dia do mes e implicacoes para planejamento de policiamento
+6. Concluir com recomendacoes operacionais especificas (reforco de efetivo, rondas direcionadas, acoes preventivas)
+- Usar negrito (**texto**) para destacar numeros e conclusoes-chave
+- Citar numeros absolutos e percentuais (evite afirmacoes vagas)
+
+DADOS DO RELATORIO:
+Periodo analisado: {f.data_ini.strftime('%d/%m/%Y')} a {f.data_fim.strftime('%d/%m/%Y')}
+Escopo geografico: {escopo}
 Naturezas filtradas: {', '.join(f.naturezas) if f.naturezas else 'todas as naturezas'}
-Total de ocorrencias: {d['total_periodo']:,}
-Variacao vs. ano anterior ({d['ultimo_ano']}): {d['delta_yoy']:+.1f}%
+Total de ocorrencias no periodo: {d['total_periodo']:,}
+Variacao YoY: {delta_label}
 
 Top 10 naturezas criminais:
 {nat_str}
+{yoy_str}
 {dp_str}
 
-Padrao temporal:
+Padrao temporal (hora x dia da semana):
 {mhd_str}
+{dm_str}
+{trend_str}
 """
 
 
