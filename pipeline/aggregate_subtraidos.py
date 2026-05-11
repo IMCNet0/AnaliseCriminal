@@ -155,14 +155,18 @@ def _groupby_count(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 
 
 def build_bairro(df: pd.DataFrame, fonte: str) -> pd.DataFrame:
-    """Agrega por bairro sem spatial join — só ANO · MES · BAIRRO · RUBRICA · N."""
+    """Agrega por logradouro+bairro sem spatial join.
+
+    Colunas resultado: FONTE · ANO · MES · LOGRADOURO · BAIRRO · RUBRICA · N
+    """
     df2 = df.copy()
     df2["FONTE"] = fonte
     if "RUBRICA" in df2.columns:
         df2["RUBRICA"] = _norm_str(df2["RUBRICA"])
-    if "BAIRRO" in df2.columns:
-        df2["BAIRRO"] = df2["BAIRRO"].astype("string").str.upper().str.strip()
-    return _groupby_count(df2, ["FONTE", "ANO", "MES", "BAIRRO", "RUBRICA"])
+    for col in ("LOGRADOURO", "BAIRRO"):
+        if col in df2.columns:
+            df2[col] = df2[col].astype("string").str.upper().str.strip()
+    return _groupby_count(df2, ["FONTE", "ANO", "MES", "LOGRADOURO", "BAIRRO", "RUBRICA"])
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +236,7 @@ def main() -> None:
 
     # --- Celulares ---
     df_cel = load_dataset("celulares_subtraidos", GEO + [
-        "BAIRRO", "RUBRICA", "MARCA_OBJETO", "DESCR_TIPOLOCAL", "DESCR_PERIODO", "FLAG_BLOQUEIO",
+        "LOGRADOURO", "BAIRRO", "RUBRICA", "MARCA_OBJETO", "DESCR_TIPOLOCAL", "DESCR_PERIODO", "FLAG_BLOQUEIO",
     ])
     bairro_frames.append(build_bairro(df_cel, "CELULARES"))
     df_cel = assign_dp(df_cel)
@@ -244,7 +248,7 @@ def main() -> None:
 
     # --- Veículos ---
     df_vei = load_dataset("veiculos_subtraidos", GEO + [
-        "BAIRRO", "RUBRICA", "DESCR_MODO_OBJETO", "DESCR_TIPO_OBJETO", "MARCA_OBJETO",
+        "LOGRADOURO", "BAIRRO", "RUBRICA", "DESCR_MODO_OBJETO", "DESCR_TIPO_OBJETO", "MARCA_OBJETO",
         "DESCR_TIPOLOCAL", "DESCR_PERIODO", "FLAG_STATUS",
     ])
     bairro_frames.append(build_bairro(df_vei, "VEICULOS"))
@@ -257,7 +261,7 @@ def main() -> None:
 
     # --- Objetos ---
     df_obj = load_dataset("objetos_subtraidos", GEO + [
-        "BAIRRO", "RUBRICA", "DESCR_TIPO_OBJETO", "DESCR_SUBTIPO_OBJETO",
+        "LOGRADOURO", "BAIRRO", "RUBRICA", "DESCR_TIPO_OBJETO", "DESCR_SUBTIPO_OBJETO",
         "DESCR_TIPOLOCAL", "DESCR_PERIODO",
     ])
     bairro_frames.append(build_bairro(df_obj, "OBJETOS"))

@@ -93,9 +93,13 @@ def _marca_filter(prefix: str, marcas: list[str]) -> list[str]:
 
 def _bairro_chart(df_all: pd.DataFrame, fonte: str,
                   f_filters, rubrica_sel: list[str]) -> None:
-    """Gráfico horizontal de bairros com maior incidência (top 15)."""
+    """Gráfico horizontal de logradouros com maior incidência (top 15).
+
+    Agrupa por LOGRADOURO; se disponível, mostra BAIRRO no label como contexto.
+    Cai para agrupamento por BAIRRO caso LOGRADOURO ainda não exista no parquet.
+    """
     if df_all.empty:
-        st.info("Agregado de bairros ainda não gerado. Rode `python pipeline/aggregate_subtraidos.py`.")
+        st.info("Agregado de logradouros ainda não gerado. Rode `python pipeline/aggregate_subtraidos.py`.")
         return
     sub = df_all[df_all["FONTE"] == fonte].copy()
     if sub.empty:
@@ -105,23 +109,48 @@ def _bairro_chart(df_all: pd.DataFrame, fonte: str,
         mask &= _mask_rubrica(sub, rubrica_sel)
     sub = sub.loc[mask]
     if sub.empty:
-        st.info("Sem dados de bairro para o período/filtro selecionado.")
+        st.info("Sem dados para o período/filtro selecionado.")
         return
-    top = (
-        sub.groupby("BAIRRO", observed=True)["N"]
-        .sum().nlargest(15).reset_index()
-        .rename(columns={"BAIRRO": "Bairro", "N": "Ocorrências"})
-        .sort_values("Ocorrências")
-    )
-    top = top[top["Bairro"].notna() & (top["Bairro"].astype(str) != "<NA>")]
+
+    has_logr = "LOGRADOURO" in sub.columns
+    group_col = "LOGRADOURO" if has_logr else "BAIRRO"
+
+    # Filtra nulos/NA antes de agrupar
+    sub = sub[sub[group_col].notna() & (sub[group_col].astype(str) != "<NA>") & (sub[group_col].astype(str) != "")]
+
+    if has_logr:
+        # Agrega por logradouro; pega o bairro mais frequente como contexto
+        agg = sub.groupby("LOGRADOURO", observed=True).agg(N=("N", "sum")).reset_index()
+        bairro_ctx = (
+            sub.groupby(["LOGRADOURO", "BAIRRO"], observed=True)["N"]
+            .sum().reset_index()
+            .sort_values("N", ascending=False)
+            .drop_duplicates("LOGRADOURO")[["LOGRADOURO", "BAIRRO"]]
+        )
+        agg = agg.merge(bairro_ctx, on="LOGRADOURO", how="left")
+        bairro_col = agg["BAIRRO"].fillna("").astype(str)
+        agg["Logradouro"] = agg["LOGRADOURO"] + agg.apply(
+            lambda r: f" ({r['BAIRRO']})" if r["BAIRRO"] not in ("", "<NA>") else "", axis=1
+        )
+        top = agg.nlargest(15, "N").sort_values("N")[["Logradouro", "N"]].rename(columns={"N": "Ocorrências"})
+        y_col = "Logradouro"
+    else:
+        top = (
+            sub.groupby("BAIRRO", observed=True)["N"]
+            .sum().nlargest(15).reset_index()
+            .rename(columns={"BAIRRO": "Logradouro", "N": "Ocorrências"})
+            .sort_values("Ocorrências")
+        )
+        y_col = "Logradouro"
+
     if top.empty:
         return
     fig = px.bar(
-        top, x="Ocorrências", y="Bairro", orientation="h",
+        top, x="Ocorrências", y=y_col, orientation="h",
         color="Ocorrências", color_continuous_scale="OrRd",
     )
-    fig.update_layout(height=480, showlegend=False,
-                      margin=dict(t=10, b=10), coloraxis_showscale=False)
+    fig.update_layout(height=500, showlegend=False,
+                      margin=dict(t=10, b=10, l=10), coloraxis_showscale=False)
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -263,7 +292,7 @@ with tab_cel:
                 fig5.update_layout(height=300, margin=dict(t=30, b=10))
                 st.plotly_chart(fig5, use_container_width=True)
 
-        st.subheader("Bairros com maior incidência")
+        st.subheader("Logradouros com maior incidência")
         _bairro_chart(df_bairro_all, "CELULARES", f, sel_rub_cel)
 
         download_buttons(df_cel.drop(columns=["COORDS_VALIDAS"], errors="ignore"),
@@ -396,7 +425,7 @@ with tab_vei:
                                        margin=dict(t=10, b=10), coloraxis_showscale=False)
                     st.plotly_chart(fig9, use_container_width=True)
 
-        st.subheader("Bairros com maior incidência")
+        st.subheader("Logradouros com maior incidência")
         _bairro_chart(df_bairro_all, "VEICULOS", f, sel_rub_vei)
 
         download_buttons(df_vei, basename="veiculos_subtraidos")
@@ -539,7 +568,7 @@ with tab_obj:
                 fig15.update_layout(height=300, margin=dict(t=30, b=10))
                 st.plotly_chart(fig15, use_container_width=True)
 
-        st.subheader("Bairros com maior incidência")
+        st.subheader("Logradouros com maior incidência")
         _bairro_chart(df_bairro_all, "OBJETOS", f, sel_rub_obj)
 
         download_buttons(df_obj, basename="objetos_subtraidos")
