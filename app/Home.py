@@ -35,8 +35,8 @@ from lib.map_builder import (
 
 
 apply_brand("Home · InsightGeoLab AI")
-header("Portal de Análise Criminal · SP",
-       "Visão espacial dos indicadores criminais do estado de São Paulo")
+header("Portal de Análise Criminal · SP-Capital",
+       "Visão espacial dos indicadores criminais da Cidade de São Paulo")
 
 f = sidebar_filters()
 
@@ -50,16 +50,35 @@ sidebar_footer()
 # =========================================================================
 # 1) KPIs
 # =========================================================================
-serie = data.serie_estado()
+# Quando o usuário escolhe uma DP na sidebar, `serie_contextual` troca
+# transparentemente a série estadual por por_dp filtrado → os KPIs,
+# gráficos e gauges passam a refletir somente aquela delegacia.
+serie = data.serie_contextual(f.dp_cod)
 if serie.empty:
-    st.info(
-        "Ainda não há agregados em `data/aggregates/`. "
-        "Rode `python pipeline/run_all.py` depois de colocar os .xlsx em `data/raw/ssp/`."
-    )
+    if f.dp_cod:
+        st.info(
+            f"Sem dados para a delegacia **{f.dp_des}** no agregado "
+            f"`por_dp.parquet`. Verifique se o pipeline foi rodado para o período."
+        )
+    else:
+        st.info(
+            "Ainda não há agregados em `data/aggregates/`. "
+            "Rode `python pipeline/run_all.py` depois de colocar os .xlsx em `data/raw/ssp/`."
+        )
     st.stop()
 
 mask_serie = f.mask_date(serie) & f.mask_natureza(serie)
 serie_f = serie.loc[mask_serie]
+
+# Aviso visual quando o DP está ativo — reforça que toda a página está
+# escopada a essa delegacia.
+if f.dp_cod:
+    st.info(
+        f"🏛️ **Escopo ativo:** Delegacia `{f.dp_des}` — todos os números "
+        f"abaixo (KPIs, mapa, séries) referem-se apenas a essa DP. "
+        f"Para voltar à visão estadual, selecione **Todos os DPs** na sidebar.",
+        icon="🏛️",
+    )
 
 total_periodo = int(serie_f["N"].sum())
 ultimo_ano = int(serie_f["ANO"].max()) if not serie_f.empty else f.data_fim.year
@@ -92,8 +111,11 @@ st.divider()
 # =========================================================================
 # 2) Estado do mapa (persistido entre reruns)
 # =========================================================================
-DEFAULT_CENTER = (-22.4, -48.5)   # ≈ centro geográfico de SP
-DEFAULT_ZOOM = 7
+# Default ajustado para a Cidade de São Paulo (rodada abr/26 #4): centro ≈
+# Praça da Sé / Marco zero, zoom 11 enquadra o município inteiro com folga
+# pra ver bairros ao redor. Antes era centro do estado de SP (zoom 7).
+DEFAULT_CENTER = (-23.5505, -46.6333)   # SP-Capital — Praça da Sé
+DEFAULT_ZOOM = 11
 
 if "map_center" not in st.session_state:
     st.session_state.map_center = DEFAULT_CENTER
@@ -126,61 +148,72 @@ modo_label = ctrl_a.radio(
 MODE = {"Coroplético": "choropleth", "Pontos": "pontos", "Hotspot": "hotspot"}[modo_label]
 
 # -------------------------------------------------------------------------
-# Busca de endereço com AUTOCOMPLETE INLINE via <datalist>
+# Busca de endereço — autocomplete real via `streamlit-searchbox`
 # -------------------------------------------------------------------------
+# Engine substituído na rodada abr/2026 #3: o approach antigo (datalist
+# HTML + botão Centralizar) não renderiza de forma confiável dentro do
+# iframe do Streamlit — o browser renderiza a datalist no DOM pai e os
+# atributos se perdem em reruns. O componente `streamlit-searchbox`
+# conversa nativamente com o Streamlit, faz debounce, e devolve o item
+# selecionado direto pelo callback — UX de autocomplete "de verdade".
+#
+# Fallback silencioso: se a lib não estiver instalada (dev fresh), cai
+# num text_input + botão (comportamento antigo), pra não quebrar o app.
+try:
+    from streamlit_searchbox import st_searchbox
+    _HAS_SEARCHBOX = True
+except ImportError:
+    _HAS_SEARCHBOX = False
+
+
+def _search_enderecos(q: str) -> list[tuple[str, dict]]:
+    """Callback do searchbox — recebe o texto em digitação e devolve
+    ``(label, payload)`` para cada sugestão. ``label`` aparece no dropdown;
+    ``payload`` (dict com lat/lon/display_name) é o que volta no retorno."""
+    if not q or len(q.strip()) < 3:
+        return []
+    hits = geocode_many(q, limit=7)
+    return [(h.get("display_name", ""), h) for h in hits if h]
+
+
 with ctrl_b:
-    st.markdown("**Buscar endereço** (digite e selecione nas sugestões)")
-    search_col1, search_col2 = st.columns([3.2, 1.0])
-
-    endereco_q = search_col1.text_input(
-        "Buscar endereço",
-        placeholder="Ex.: Av. Paulista 1578, São Paulo",
-        label_visibility="collapsed",
-        key="endereco_q",
-    )
-    do_buscar = search_col2.button("🔍 Centralizar", use_container_width=True)
-
-    hits: list[dict] = []
-    if endereco_q and len(endereco_q.strip()) >= 3:
-        hits = geocode_many(endereco_q, limit=7)
-        st.session_state["_geo_hits"] = hits
+    if _HAS_SEARCHBOX:
+        chosen = st_searchbox(
+            _search_enderecos,
+            placeholder="Endereço dentro da Cidade de São Paulo (ex.: Av. Paulista 1578)",
+            label="🔍 Buscar endereço (SP-Capital)",
+            key="endereco_searchbox",
+            clear_on_submit=False,
+            edit_after_submit="current",
+        )
+        if chosen and isinstance(chosen, dict) and "lat" in chosen:
+            st.session_state.map_center = (float(chosen["lat"]), float(chosen["lon"]))
+            st.session_state.map_zoom = 15
+            st.session_state["_endereco_marker"] = (
+                float(chosen["lat"]), float(chosen["lon"]),
+                str(chosen.get("display_name", "")),
+            )
     else:
-        st.session_state["_geo_hits"] = []
-
-    if hits:
-        def _opt(h: dict) -> str:
-            name = str(h.get("display_name", "")).replace('"', "&quot;")
-            return f'<option value="{name}"></option>'
-        options_html = "".join(_opt(h) for h in hits)
-        st.markdown(
-            f"""
-            <datalist id="endereco-suggestions">{options_html}</datalist>
-            <script>
-              (function() {{
-                const inputs = window.parent.document.querySelectorAll(
-                  'input[aria-label="Buscar endereço"]'
-                );
-                inputs.forEach(inp => inp.setAttribute('list', 'endereco-suggestions'));
-              }})();
-            </script>
-            """,
-            unsafe_allow_html=True,
+        # Fallback — apenas pra dev local sem a lib instalada.
+        st.warning(
+            "⚠️ `streamlit-searchbox` não instalado — rodando com busca básica. "
+            "`pip install streamlit-searchbox` pra ativar o autocomplete."
         )
-        with st.expander(f"Sugestões ({len(hits)})", expanded=False):
-            for h in hits[:7]:
-                st.caption(f"• {h['display_name']}")
-
-    if do_buscar and endereco_q and hits:
-        chosen = next(
-            (h for h in hits if h["display_name"] == endereco_q),
-            hits[0],
+        endereco_q = st.text_input(
+            "Buscar endereço",
+            placeholder="Ex.: Av. Paulista 1578, São Paulo",
+            key="endereco_q",
         )
-        st.session_state.map_center = (chosen["lat"], chosen["lon"])
-        st.session_state.map_zoom = 15
-        st.session_state["_endereco_marker"] = (
-            chosen["lat"], chosen["lon"], chosen["display_name"]
-        )
-        st.rerun()
+        if st.button("🔍 Centralizar", use_container_width=False) and endereco_q:
+            hits = geocode_many(endereco_q, limit=1)
+            if hits:
+                h = hits[0]
+                st.session_state.map_center = (h["lat"], h["lon"])
+                st.session_state.map_zoom = 15
+                st.session_state["_endereco_marker"] = (
+                    h["lat"], h["lon"], h["display_name"],
+                )
+                st.rerun()
 
     endereco_marker = st.session_state.get("_endereco_marker")
 
@@ -208,7 +241,7 @@ if tem_natureza and MODE in ("pontos", "hotspot"):
         m_end = f.data_fim.month if a == f.ano_fim else 12
         for m in range(m_start, m_end + 1):
             for nat in f.naturezas:
-                df_am = data.pontos(int(a), int(m), nat)
+                df_am = data.pontos(int(a), int(m), nat, dp_cod=f.dp_cod)
                 if not df_am.empty:
                     frames.append(df_am)
     pts = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -268,7 +301,9 @@ if tem_natureza and MODE == "choropleth":
             f"Rode `python pipeline/run_all.py` para regerá-lo."
         )
     else:
-        mask_rec = f.mask_date(df_rec) & f.mask_natureza(df_rec)
+        # mask_dp é no-op no agregado de Setor (sem DpGeoCod); no de DP,
+        # restringe o merge a uma única linha-DP por natureza/mês.
+        mask_rec = f.mask_date(df_rec) & f.mask_natureza(df_rec) & f.mask_dp(df_rec)
         agg_cols = [c for c in df_rec.columns if c in {
             data_key, "NM_MUN", "regiao", "DpGeoDes", "CD_MUN", "sc_cod",
         }]
@@ -318,10 +353,29 @@ if tem_natureza and MODE == "choropleth":
                     f"Em zoom baixo fica denso; aproxime para ler com conforto."
                 )
 
+            # Quando o usuário fixou uma DP, enquadramos o mapa nela.
+            # Guardamos no session_state pra o build_map abaixo consumir.
+            if f.dp_cod and recorte_choro == "Delegacia (DP)":
+                try:
+                    sel_poly = merged.loc[merged[geo_key].astype(str).str.strip()
+                                          == str(f.dp_cod).strip()]
+                    if not sel_poly.empty:
+                        minx, miny, maxx, maxy = sel_poly.geometry.total_bounds
+                        if not any(pd.isna(v) for v in (minx, miny, maxx, maxy)):
+                            st.session_state["_dp_fit_bounds"] = (
+                                float(miny), float(minx), float(maxy), float(maxx),
+                            )
+                except Exception:
+                    pass
+
 
 # =========================================================================
 # 5) Renderização do mapa
 # =========================================================================
+# fit_bounds: quando a DP está fixada, enquadra o polígono dela
+# (definido no bloco do coroplético acima); senão deixa o zoom/center livres.
+dp_bounds = st.session_state.pop("_dp_fit_bounds", None) if f.dp_cod else None
+
 fmap = build_map(
     modo=MODE,
     pts_data=pts_data,
@@ -331,7 +385,7 @@ fmap = build_map(
     with_pmesp_labels=False,     # rótulos suprimidos em definitivo
     endereco_marker=endereco_marker,
     points_min_zoom=6,
-    fit_bounds=None,             # sem fit automático (não há mais dropdown PMESP)
+    fit_bounds=dp_bounds,        # enquadra a DP quando selecionada; senão None
     with_draw_tools=True,        # ferramenta laço (polígono/retângulo/círculo)
 )
 

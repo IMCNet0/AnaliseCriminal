@@ -54,6 +54,11 @@ SS_DATA_INI  = "flt_data_ini"
 SS_DATA_FIM  = "flt_data_fim"
 SS_NATUREZAS = "flt_naturezas"
 SS_RECORTE   = "flt_recorte"
+SS_DP        = "flt_dp"       # DpGeoDes selecionado (ou "Todos os DPs")
+
+
+# Rótulo usado como "todos" no dropdown de DP.
+DP_TODOS = "Todos os DPs"
 
 
 @dataclass
@@ -62,11 +67,17 @@ class GlobalFilters:
 
     Os atalhos ``ano_ini`` / ``ano_fim`` / ``mes`` continuam expostos por
     compatibilidade (pontos/hotspot paginam por ANO × MES no parquet).
+
+    Campo ``dp_cod`` (rodada abr/26 #3): quando presente, restringe TUDO —
+    KPIs, séries, gauges, pontos e coroplético — àquela delegacia. None =
+    estadual (default). ``dp_des`` é a descrição para exibição.
     """
     data_ini: date
     data_fim: date
     naturezas: list[str]
     recorte: str
+    dp_cod: Optional[str] = None
+    dp_des: Optional[str] = None
 
     @property
     def ano_ini(self) -> int:
@@ -110,6 +121,27 @@ class GlobalFilters:
         if not self.naturezas:
             return pd.Series(True, index=df.index)
         return df["NATUREZA_APURADA"].isin(self.naturezas)
+
+    def mask_dp(self, df: pd.DataFrame) -> pd.Series:
+        """Filtra por Delegacia (DP) — só age se ``dp_cod`` estiver setado.
+
+        Usa ``DpGeoCod`` quando presente no DataFrame (pontos, agregados
+        por_dp). Se o df não tiver essa coluna (série estadual crua), não
+        filtra aqui — a troca pra por_dp-por-DP é feita em ``data.serie_contextual``.
+        """
+        if not self.dp_cod:
+            return pd.Series(True, index=df.index)
+        if "DpGeoCod" not in df.columns:
+            return pd.Series(True, index=df.index)
+        # Normalização coerente com _norm_dp_cod de lib/data.py.
+        col = df["DpGeoCod"]
+        nums = pd.to_numeric(col, errors="coerce")
+        valid = nums.dropna()
+        if not valid.empty and (valid == valid.astype("int64")).all():
+            norm = nums.astype("Int64").astype("string")
+        else:
+            norm = col.astype("string").str.strip().str.upper()
+        return norm == str(self.dp_cod).strip()
 
     # --- Janela "mesmo período do ano anterior" ----------------------------
     # Usada pelos gauges YoY em Gráficos: compara o total do intervalo atual
@@ -176,7 +208,7 @@ def _echo_session_state() -> None:
     e o Streamlit passa a preservá-lo. Ver docs 1.28+:
     https://docs.streamlit.io/library/advanced-features/widget-behavior
     """
-    for k in (SS_DATA_INI, SS_DATA_FIM, SS_NATUREZAS, SS_RECORTE):
+    for k in (SS_DATA_INI, SS_DATA_FIM, SS_NATUREZAS, SS_RECORTE, SS_DP):
         if k in st.session_state:
             st.session_state[k] = st.session_state[k]
 
@@ -256,9 +288,42 @@ def sidebar_filters(default_naturezas: Optional[list[str]] = None) -> GlobalFilt
              "tempo de ingestão contra o shapefile da camada.",
     )
 
+    # --- Delegacia (DP) — dropdown global ---------------------------------
+    # Restringe TODO o app (KPIs/séries/mapa/pontos) à DP escolhida. Default
+    # "Todos os DPs" preserva a visão estadual. Lista vem de ``data.dp_options``
+    # (por_dp se tiver DpGeoDes; caso contrário cai pro shapefile DP.json).
+    dp_cod: Optional[str] = None
+    dp_des: Optional[str] = None
+    try:
+        dp_df = data.dp_options()
+    except Exception:
+        dp_df = None
+    if dp_df is None or dp_df.empty:
+        st.sidebar.caption(
+            "ℹ️ Lista de DPs indisponível — agregado `por_dp.parquet` ou "
+            "`data/geo/DP.json` não encontrados."
+        )
+    else:
+        opcoes = [DP_TODOS] + dp_df["DpGeoDes"].astype(str).tolist()
+        if st.session_state.get(SS_DP) not in opcoes:
+            st.session_state[SS_DP] = DP_TODOS
+        escolhido = st.sidebar.selectbox(
+            "Delegacia (DP)", opcoes,
+            key=SS_DP,
+            help="Restringe todo o app à delegacia selecionada (KPIs, "
+                 "séries, mapa e pontos). Padrão: todos os DPs.",
+        )
+        if escolhido and escolhido != DP_TODOS:
+            # Resolve DpGeoCod da escolha
+            row = dp_df.loc[dp_df["DpGeoDes"].astype(str) == escolhido]
+            if not row.empty:
+                dp_des = escolhido
+                dp_cod = str(row.iloc[0]["DpGeoCod"]).strip()
+
     return GlobalFilters(
         data_ini=data_ini, data_fim=data_fim,
         naturezas=sel_nat, recorte=recorte,
+        dp_cod=dp_cod, dp_des=dp_des,
     )
 
 

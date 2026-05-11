@@ -67,7 +67,10 @@ def _halo_label_css(color: str, size_px: int = 11) -> str:
 def geocode_many(endereco: str, limit: int = 5) -> list[dict]:
     """Nominatim (OSM). Retorna até `limit` resultados (lat, lon, display_name).
 
-    Viés para SP via viewbox+bounded. Lista ordenada como veio da API.
+    Viés agressivo para a CIDADE DE SÃO PAULO via viewbox+bounded
+    (rodada abr/26 #4): a busca passa a retornar só endereços dentro do
+    bbox da Capital (-46.83/-46.36 lon × -23.36/-24.01 lat). Resultados
+    fora da Capital são descartados pelo Nominatim com ``bounded=1``.
     """
     import requests
 
@@ -80,11 +83,13 @@ def geocode_many(endereco: str, limit: int = 5) -> list[dict]:
             params={
                 "q": q, "format": "json", "limit": int(limit),
                 "countrycodes": "br",
-                "viewbox": "-53.2,-25.5,-44.1,-19.7",
+                # bbox SP-Capital (W,S,E,N) — pequeno o bastante pra cortar
+                # ABC, Guarulhos, Osasco e demais municípios da RM.
+                "viewbox": "-46.83,-24.01,-46.36,-23.36",
                 "bounded": 1,
                 "addressdetails": 0,
             },
-            headers={"User-Agent": "InsightGeoLab-AI/1.0 (portal análise criminal SP)"},
+            headers={"User-Agent": "InsightGeoLab-AI/1.0 (portal análise criminal SP-Capital)"},
             timeout=8,
         )
         r.raise_for_status()
@@ -358,11 +363,29 @@ def _add_choropleth(fmap: folium.Map, gdf, value_col: str, key_col: str,
             "fillOpacity": 0.75,
         }
 
+    # Aliases legíveis — o campo cru (ex.: "DpGeoDes", "DpGeoCod") vira um
+    # rótulo amigável ("Delegacia", "Código do DP") no tooltip. Cai pro
+    # próprio nome da coluna quando não houver mapeamento.
+    PRETTY = {
+        "DpGeoDes":  "Delegacia",
+        "DpGeoCod":  "Código do DP",
+        "NM_MUN":    "Município",
+        "CD_MUN":    "Código IBGE",
+        "sc_cod":    "Setor Censitário",
+        "OPM":       "Batalhão",
+        "OPMCOD":    "Companhia (OPMCOD)",
+        "cmdo_label":"Comando",
+        "N":         "Ocorrências",
+    }
+
+    def _alias(col: str) -> str:
+        return PRETTY.get(col, col)
+
     tooltip_fields = [key_col, value_col]
-    tooltip_aliases = [key_col, value_col]
+    tooltip_aliases = [_alias(key_col), _alias(value_col)]
     if label_col and label_col in gdf.columns:
         tooltip_fields.insert(0, label_col)
-        tooltip_aliases.insert(0, label_col)
+        tooltip_aliases.insert(0, _alias(label_col))
 
     folium.GeoJson(
         data=gdf.to_json(),

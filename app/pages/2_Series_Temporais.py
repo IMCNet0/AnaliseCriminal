@@ -25,15 +25,30 @@ from lib import data, stats
 from lib.downloads import download_buttons
 
 apply_brand("Séries Temporais · Portal de Análise Criminal")
-header("Séries Temporais", "Evolução, sazonalidade, previsão e matriz hora×dia")
+header("Séries Temporais · SP-Capital",
+       "Evolução, sazonalidade, previsão e matriz hora×dia (Cidade de São Paulo)")
 
 f = sidebar_filters()
 sidebar_footer()
 
-serie = data.serie_estado()
+# serie_contextual troca serie_estado por por_dp-filtrado quando uma DP
+# está selecionada na sidebar — top 5, STL e previsão passam a ser da DP.
+serie = data.serie_contextual(f.dp_cod)
 if serie.empty:
-    st.info("Rode `python pipeline/run_all.py` para gerar os agregados.")
+    if f.dp_cod:
+        st.info(
+            f"Sem dados para **{f.dp_des}**. Tente outra DP ou volte "
+            f"pra **Todos os DPs** na sidebar."
+        )
+    else:
+        st.info("Rode `python pipeline/run_all.py` para gerar os agregados.")
     st.stop()
+
+if f.dp_cod:
+    st.info(
+        f"🏛️ **Escopo ativo:** Delegacia `{f.dp_des}`.",
+        icon="🏛️",
+    )
 
 mask = f.mask_date(serie) & f.mask_natureza(serie)
 serie_f = serie.loc[mask]
@@ -229,9 +244,18 @@ if mhd.empty:
         "`python pipeline/aggregate_hora_dia.py` depois do `run_all.py` para gerá-lo."
     )
 else:
-    # Aplica filtros globais (data, natureza).
-    m_mask = f.mask_date(mhd) & f.mask_natureza(mhd)
+    # Aplica filtros globais (data, natureza, DP quando disponível).
+    # mask_dp é no-op se a matriz_hora_dia.parquet não tiver DpGeoCod
+    # (caso atual: o agregado é estadual). Fica preparada pra quando o
+    # pipeline for regerado com essa dimensão.
+    m_mask = f.mask_date(mhd) & f.mask_natureza(mhd) & f.mask_dp(mhd)
     mhd_f = mhd.loc[m_mask].copy()
+    if f.dp_cod and "DpGeoCod" not in mhd.columns:
+        st.caption(
+            "⚠️ A matriz atual é **estadual** (o agregado não foi gerado com "
+            "DpGeoCod). Filtrar por DP aqui exigiria regenerar "
+            "`matriz_hora_dia.parquet` com a dimensão de delegacia."
+        )
 
     # Filtro de DESC_PERIODO específico desta matriz (não afeta outras páginas).
     periodos = sorted(mhd_f["DESC_PERIODO"].dropna().astype(str).unique().tolist())

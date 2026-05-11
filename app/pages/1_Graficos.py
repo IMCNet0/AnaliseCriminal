@@ -23,18 +23,35 @@ from lib import data
 from lib.downloads import download_buttons
 
 apply_brand("Gráficos · InsightGeoLab AI")
-header("Gráficos", "Gauges YoY, evolução mensal e ranking das naturezas")
+header("Gráficos · SP-Capital",
+       "Gauges YoY, evolução mensal e ranking das naturezas (Cidade de São Paulo)")
 
 f = sidebar_filters()
 sidebar_footer()
 
-serie = data.serie_estado()
+# Quando uma DP está selecionada, serie_contextual substitui a série
+# estadual por por_dp filtrado — gauges/evolução/ranking passam a refletir
+# apenas aquela delegacia. None = estadual (default).
+serie = data.serie_contextual(f.dp_cod)
 if serie.empty:
-    st.info(
-        "Ainda não há agregados em `data/aggregates/`. "
-        "Rode `python pipeline/run_all.py` depois de colocar os .xlsx em `data/raw/ssp/`."
-    )
+    if f.dp_cod:
+        st.info(
+            f"Sem dados para a delegacia **{f.dp_des}**. Tente outra DP ou "
+            f"volte pra **Todos os DPs** na sidebar."
+        )
+    else:
+        st.info(
+            "Ainda não há agregados em `data/aggregates/`. "
+            "Rode `python pipeline/run_all.py` depois de colocar os .xlsx em `data/raw/ssp/`."
+        )
     st.stop()
+
+if f.dp_cod:
+    st.info(
+        f"🏛️ **Escopo ativo:** Delegacia `{f.dp_des}` — os gauges, evolução "
+        f"mensal e ranking abaixo são restritos a essa DP.",
+        icon="🏛️",
+    )
 
 mask = f.mask_date(serie) & f.mask_natureza(serie)
 serie_f = serie.loc[mask]
@@ -171,7 +188,7 @@ st.divider()
 # =========================================================================
 # 2) Evolução mensal estadual — barras empilhadas por indicador
 # =========================================================================
-st.subheader("Evolução mensal no estado de SP (empilhado por indicador)")
+st.subheader("Evolução mensal na Cidade de São Paulo (empilhado por indicador)")
 serie_mes = (
     serie_f.groupby(["DATA", "NATUREZA_APURADA"], as_index=False, observed=True)["N"]
     .sum().sort_values(["DATA", "NATUREZA_APURADA"])

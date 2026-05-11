@@ -677,3 +677,135 @@ removeu `fit_bounds`, hierarquia CPA/BTL/CIA da sidebar e
 - `pipeline/aggregate_hora_dia.py` — NOVO.
 - `pipeline/run_all.py` — passo 5/5 e `--only hora_dia`.
 
+---
+
+## 2026-05-11 — Atualização 2026 + correção de 4 bugs críticos
+
+**Sessão:** 2026-05-11  
+**Contexto:** Novos arquivos SSP-SP 2026 carregados em `data/raw/ssp/`. Quatro bugs descobertos durante validação local após a atualização.
+
+---
+
+### A. Pipeline incremental `update_2026.py`
+
+**Problema.** O `run_all.py` processa **todos** os `.xlsx` históricos a cada execução. Como o `to_parquet()` com `partition_cols` usa `existing_data_behavior="overwrite_or_ignore"` (default pyarrow), re-rodar sobre partições existentes **acumula** arquivos parquet dentro das mesmas pastas — duplicando dados na leitura posterior.
+
+**Arquivo duplicado.** `SPDadosCriminais_2026 (1).xlsx` (nome gerado pelo Windows ao baixar um arquivo já existente) estava na pasta e seria capturado pelo glob `SPDadosCriminais_*.xlsx`, duplicando os dados de 2026.
+
+**Fix.**
+1. Renomeado `SPDadosCriminais_2026 (1).xlsx` → `_old_SPDadosCriminais_2026_v1.xlsx` (fora do glob).
+2. Deletadas somente as partições `ANO=2026` nos 4 datasets processados (`sp_dados_criminais`, `celulares_subtraidos`, `veiculos_subtraidos`, `objetos_subtraidos`).
+3. Criado `pipeline/update_2026.py`: chama diretamente `ingest_file()` / `ingest_family()` para os arquivos `*_2026.xlsx`, seguido de `aggregate.main()`, `aggregate_hora_dia.main()` e `build_sample.main()`.
+
+**Resultado:**
+| Dataset | Registros |
+|---|---|
+| SPDadosCriminais 2026 | 279.994 |
+| CelularesSubtraidos 2026 | 85.175 |
+| VeiculosSubtraidos 2026 | 52.243 |
+| ObjetosSubtraidos 2026 | 431.089 |
+| Agregação (5,07M linhas base) | ✅ todos os parquets |
+| Matriz hora×dia | 28.406 linhas |
+| Amostra rebuild | 255.000 pontos · 5,5 MB |
+
+**Arquivo criado:** `pipeline/update_2026.py`
+
+---
+
+### B. Bug: mapa de pontos retornava "sem coordenadas válidas"
+
+**Sintoma.** Modo Pontos e Hotspot: mensagem "Sem pontos com coordenadas válidas" para qualquer período/natureza.
+
+**Diagnóstico.** A SSP-SP grava o município abreviado como `"S.PAULO"` em todos os anos. O filtro de SP-Capital em `data.py::pontos()` comparava com `"SAO PAULO"` (forma completa) — zero match, zero pontos.
+
+```python
+# ANTES (sempre vazio)
+df = df[nm == SP_CAPITAL_NM_MUN]           # "S.PAULO" != "SAO PAULO"
+
+# DEPOIS
+SP_CAPITAL_NM_MUN_ALIASES = {"SAO PAULO", "S.PAULO", "S. PAULO"}
+df = df[nm.isin(SP_CAPITAL_NM_MUN_ALIASES)]
+```
+
+**Fix em `app/lib/data.py`:**
+- Adicionada constante `SP_CAPITAL_NM_MUN_ALIASES`.
+- Filtro em `pontos()` trocado de `== SP_CAPITAL_NM_MUN` para `isin(SP_CAPITAL_NM_MUN_ALIASES)`.
+
+**Observação.** O bug existia desde a adoção do recorte SP-Capital (rodada abr/26 #4). Os pontos nunca tinham funcionado no modo Capital.
+
+---
+
+### C. Bug: filtro de Delegacia (DP) retornava "sem dados para a delegacia"
+
+**Sintoma.** Selecionar qualquer DP na sidebar produzia: *"Sem dados para a delegacia XX D.P. YYYY no agregado `por_dp.parquet`. Verifique se o pipeline foi rodado para o período."*
+
+**Diagnóstico.** `por_dp.parquet` grava `DpGeoCod` como `float64` (e.g., `10102.0`). `dp_options()` fazia `.astype("string")` → `"10102.0"` (com `.0`). Esse valor era salvo no `session_state`. Mas `serie_contextual()` usava `_norm_dp_cod()` que converte float → `Int64` → `"10102"` (sem `.0`). Comparação `"10102" == "10102.0"` → **False** → série vazia para toda DP.
+
+**Fix em `app/lib/data.py::dp_options()`:**
+```python
+# ANTES
+.astype({"DpGeoCod": "string", ...})   # "10102.0" — errado
+
+# DEPOIS
+out["DpGeoCod"] = _norm_dp_cod(out["DpGeoCod"])  # "10102" — consistente
+```
+O mesmo normalizador `_norm_dp_cod()` é agora aplicado tanto ao gerar a lista de opções quanto ao filtrar a série, garantindo que o `dp_cod` salvo no `session_state` case perfeitamente com o valor na comparação.
+
+O mesmo fix foi aplicado ao path de fallback (via `DP.json`).
+
+---
+
+### D. Bug: mapa de pontos não fazia recorte por DP
+
+**Sintoma.** Ao selecionar uma DP, os KPIs refletiam só aquela delegacia, mas o mapa de pontos continuava exibindo pontos de toda a Capital.
+
+**Diagnóstico (camada 1).** `mask_dp()` em `filters.py` faz no-op quando `"DpGeoCod" not in df.columns`. A coluna `DpGeoCod` nunca existia nos arquivos de pontos: o spatial join do `aggregate.py` era usado apenas para contar (escrevia só os agregados, nunca de volta ao nível do ponto).
+
+**Fix — parte 1:** `build_sample.py` atualizado para adicionar `DpGeoCod` a cada ponto da amostra via spatial join leve (5k pontos × 94 polígonos de Capital → instante). Funções adicionadas:
+- `_build_dp_gdf()` — carrega `DP.json` como GeoDataFrame.
+- `_assign_dp(df, gdf_dp)` — sjoin `predicate="within"`, normaliza resultado para string `"10102"` (sem `.0`).
+
+**Diagnóstico (camada 2).** Mesmo com `DpGeoCod` na amostra, a amostra tem ~5.000 pontos/mês de toda a Capital. Para uma DP com KPI=37, a representação esperada é `37 × (5000/72030) ≈ 2,6 pontos` — resulta em 0-1 ponto mostrado, enquanto o KPI mostra 37. Inaceitável para uso em campo.
+
+**Fix — parte 2:** `pontos()` em `data.py` inverteu a prioridade das fontes de dados:
+```python
+# ANTES: amostra preferida, full como fallback
+path = PROCESSED / "sp_dados_criminais"  # amostra (5 MB)
+
+# DEPOIS: base completa preferida, amostra como fallback (Cloud)
+use_full = (PROCESSED_FULL / "sp_dados_criminais").exists()
+path = PROCESSED_FULL / ... if use_full else PROCESSED / ...
+```
+Com a base completa (98.915 linhas por partição estadual → ~32.566 Capital → ~7.140 ROUBO-OUTROS Capital → **37 exatos** com sjoin), os pontos batem exatamente com o KPI.
+
+**Fix — parte 3:** Para que o filtro de DP funcione com a base completa (que não tem `DpGeoCod`), adicionado `dp_cod` como parâmetro de `pontos()` e nova função `_filter_pontos_by_dp(df, dp_cod)`:
+- Localiza o polígono da DP em `DP.json` pelo código.
+- Faz `gpd.sjoin(pts, gdf_dp_single, how="inner")` — 1 polígono contra ~7k pontos: < 1s.
+- `Home.py` atualizado: passa `dp_cod=f.dp_cod` para `data.pontos()` e remove o `pts.loc[f.mask_dp(pts)]` posterior (filtro agora acontece dentro de `pontos()`).
+
+**Validação:**
+```
+Total partição março/2026: 98.915
+Capital com coords: 32.566
+ROUBO - OUTROS capital: 7.140
+ROUBO - OUTROS em Bom Retiro (sjoin): 37  ← bate com o KPI
+```
+
+---
+
+### Arquivos modificados nesta sessão
+
+| Arquivo | Tipo | Descrição |
+|---|---|---|
+| `pipeline/update_2026.py` | **NOVO** | Ingestão incremental só dos arquivos `*_2026.xlsx` |
+| `pipeline/build_sample.py` | modificado | Adiciona `DpGeoCod` via sjoin a cada partição da amostra |
+| `app/lib/data.py` | modificado | 4 fixes: alias NOME_MUNICIPIO, norm DpGeoCod em dp_options, pontos() prefere base completa, _filter_pontos_by_dp() |
+| `app/Home.py` | modificado | Passa `dp_cod=f.dp_cod` para `data.pontos()`; remove mask_dp posterior |
+
+### Heurísticas adicionadas
+
+- **`to_parquet` acumula, não substitui.** Ao rodar o pipeline sobre partições existentes, sempre deletar as partições do período a atualizar antes — ou o pyarrow cria múltiplos arquivos na mesma pasta e a leitura duplica os dados.
+- **Abreviações de município da SSP-SP.** O campo `NOME_MUNICIPIO` usa `"S.PAULO"` (não `"SAO PAULO"`). Qualquer filtro string sobre essa coluna precisa cobrir os dois formatos.
+- **`float64` com `.0` em chaves inteiras.** Colunas como `DpGeoCod` saem do pipeline como `float64` (para acomodar NaN durante o sjoin). `.astype("string")` gera `"10102.0"`. Sempre normalizar via `_norm_dp_cod()` antes de comparar ou salvar em `session_state`.
+- **Amostra ≠ dados para uso em campo.** A amostra de 5k/mês é adequada para mapa exploratório, mas inutilizável para análise por DP pequena. Em ambiente local com base completa disponível, `pontos()` deve preferir a base completa.
+

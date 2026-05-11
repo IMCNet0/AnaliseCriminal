@@ -28,7 +28,8 @@ from lib import data
 from lib.downloads import download_buttons
 
 apply_brand("Rankings · InsightGeoLab AI")
-header("Rankings", "Rankings e comparativos por recorte geográfico")
+header("Rankings · SP-Capital",
+       "Rankings e comparativos por recorte geográfico (Cidade de São Paulo)")
 
 f = sidebar_filters()
 sidebar_footer()

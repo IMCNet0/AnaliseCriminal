@@ -9,7 +9,8 @@ import streamlit as st
 from lib.branding import apply_brand, header
 
 apply_brand("Metodologia · Portal de Análise Criminal")
-header("Metodologia", "Fontes, limitações e referências bibliográficas")
+header("Metodologia · SP-Capital",
+       "Fontes, limitações e referências bibliográficas (Cidade de São Paulo)")
 
 st.markdown(
     """
@@ -32,6 +33,19 @@ st.markdown(
 6. Escrita em Parquet particionado por **ano/mês**.
 7. Agregação pré-calculada por município, setor censitário, batalhão, companhia e comando,
    via *spatial join* ponto-em-polígono.
+8. **Recorte SP-Capital (rodada abr/26 #4)**: o portal exibe exclusivamente
+   ocorrências da **Cidade de São Paulo** (IBGE 3550308). O filtro é
+   aplicado na camada de dados (`app/lib/data.py`) através de:
+   - `por_municipio` / `por_setor` → `CD_MUN == 3550308`;
+   - `por_dp` → `DpGeoCod` em DPs cujo `SecGeoCod` pertence às seccionais
+     DECAP da Capital (`{10100, 10200, 10210, 10300, 20100, 20200, 500070, 500080}`,
+     ≈ 94 DPs no total);
+   - `pontos` → `NOME_MUNICIPIO == "SAO PAULO"` (após `unidecode`/upper);
+   - geocoder Nominatim → `viewbox` restrito ao bbox da Capital
+     (-46.83/-46.36 lon × -23.36/-24.01 lat) com `bounded=1`.
+
+   Os agregados estaduais permanecem no Parquet para regerar o portal a
+   partir da SSP-SP, mas **não são consumidos** pelo runtime atual.
 
 ### Limitações e ressalvas
 

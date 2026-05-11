@@ -11,6 +11,7 @@ Usa os GeoJSON fornecidos em `data/geo/`:
 from __future__ import annotations
 
 from pathlib import Path
+import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +27,9 @@ LAYERS = {
     # porque a numeração da CIA é interna ao batalhão.
     "Companhia PMESP":  ("CIA_PMESP.json",          "OPMCOD"),
     "Comando (CPA)":    ("CMDO_PMESP.json",         "cmdo_label"),
+    # DP.json traz DpGeoCod (ID numérico, 1039 valores) + DpGeoDes (descrição
+    # tipo "001 DP SE SÃO PAULO"). A chave de MERGE é o código; o rótulo
+    # visível (tooltip/dropdown sidebar) usa DpGeoDes.
     "Delegacia (DP)":   ("DP.json",                 "DpGeoCod"),
 }
 
@@ -42,6 +46,17 @@ JOIN_KEYS_IN_DATA = {
 
 @st.cache_resource(show_spinner="Carregando camada geográfica…")
 def load_layer(recorte: str):
+    """Carrega o shapefile/geoparquet da camada e devolve ``(gdf, key_col)``.
+
+    SP-Capital (rodada abr/26 #4):
+      • Camada **Delegacia (DP)** é filtrada às DPs da Capital usando o
+        ``SecGeoCod`` dentro de ``SP_CAPITAL_DP_SECCIONAIS``. Reduz 1039 →
+        ~94 polígonos e mantém o coroplético/dropdown coerente com o
+        recorte do data-layer.
+      • Camada **Setor Censitário** é filtrada por ``CD_MUN`` == SP-Capital.
+      • Demais camadas (PMESP) carregam estaduais — não usadas no recorte
+        atual mas mantidas para regressão futura.
+    """
     import geopandas as gpd
     entry = LAYERS.get(recorte)
     if not entry:
@@ -58,6 +73,19 @@ def load_layer(recorte: str):
         gdf = gdf.set_crs("EPSG:4326")
     else:
         gdf = gdf.to_crs("EPSG:4326")
+
+    # ----------------------------------------------------------------------
+    # Filtro SP-Capital: aplicado ANTES da simplificação para economizar
+    # CPU em shapefiles grandes (CENSO_simplified tem ~250k polígonos).
+    # ----------------------------------------------------------------------
+    if recorte == "Delegacia (DP)" and "SecGeoCod" in gdf.columns:
+        from .data import SP_CAPITAL_DP_SECCIONAIS
+        sec = pd.to_numeric(gdf["SecGeoCod"], errors="coerce").astype("Int64")
+        gdf = gdf[sec.isin(list(SP_CAPITAL_DP_SECCIONAIS))].copy()
+    elif recorte == "Setor Censitário" and "CD_MUN" in gdf.columns:
+        from .data import SP_CAPITAL_CD_MUN
+        gdf = gdf[gdf["CD_MUN"].astype("string").str.strip() == SP_CAPITAL_CD_MUN].copy()
+
     # Simplificação leve — balanço entre fidelidade e peso no wire
     gdf["geometry"] = gdf.geometry.simplify(tolerance=0.0002, preserve_topology=True)
     return gdf, key

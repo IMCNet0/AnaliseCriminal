@@ -44,6 +44,44 @@ KEEP_COLS = [
     "COORDS_VALIDAS",
 ]
 
+DP_JSON = ROOT / "data" / "geo" / "DP.json"
+
+
+def _build_dp_gdf():
+    """Carrega DP.json como GeoDataFrame (mantém só DpGeoCod + geometry)."""
+    import geopandas as gpd
+    if not DP_JSON.exists():
+        return None
+    gdf = gpd.read_file(str(DP_JSON))
+    if gdf.crs is None:
+        gdf = gdf.set_crs("EPSG:4326")
+    else:
+        gdf = gdf.to_crs("EPSG:4326")
+    return gdf[["DpGeoCod", "geometry"]].copy()
+
+
+def _assign_dp(df: pd.DataFrame, gdf_dp) -> pd.DataFrame:
+    """Spatial join ponto-em-polígono para atribuir DpGeoCod a cada amostra."""
+    import geopandas as gpd
+    pts = gpd.GeoDataFrame(
+        df.reset_index(drop=True),
+        geometry=gpd.points_from_xy(df["LONGITUDE"], df["LATITUDE"]),
+        crs="EPSG:4326",
+    )
+    joined = gpd.sjoin(pts, gdf_dp, how="left", predicate="within")
+    if joined.index.has_duplicates:
+        joined = joined[~joined.index.duplicated(keep="first")]
+    df = joined.drop(columns=["geometry", "index_right"], errors="ignore")
+    # Normaliza: float 10102.0 → string "10102"
+    if "DpGeoCod" in df.columns:
+        nums = pd.to_numeric(df["DpGeoCod"], errors="coerce")
+        valid = nums.dropna()
+        if not valid.empty and (valid == valid.astype("int64")).all():
+            df["DpGeoCod"] = nums.astype("Int64").astype("string")
+        else:
+            df["DpGeoCod"] = df["DpGeoCod"].astype("string").str.strip()
+    return df
+
 
 def norm_natureza(series: pd.Series) -> pd.Series:
     from unidecode import unidecode
@@ -105,6 +143,10 @@ def main() -> int:
         log.error("Nenhuma partição encontrada em %s", base)
         return 1
 
+    gdf_dp = _build_dp_gdf()
+    if gdf_dp is None:
+        log.warning("DP.json não encontrado — DpGeoCod não será incluído na amostra")
+
     rng = np.random.default_rng(args.seed)
     total_in = 0
     total_out = 0
@@ -126,6 +168,10 @@ def main() -> int:
 
         # Normaliza natureza agora pra casar com os agregados sem runtime overhead
         df["NATUREZA_APURADA"] = norm_natureza(df["NATUREZA_APURADA"])
+
+        # Atribui DpGeoCod via spatial join para permitir filtro por delegacia na UI
+        if gdf_dp is not None:
+            df = _assign_dp(df, gdf_dp)
 
         out_dir = SAMPLE / f"ANO={ano}" / f"MES={mes}"
         out_dir.mkdir(parents=True, exist_ok=True)
