@@ -389,6 +389,19 @@ def naturezas_disponiveis() -> list[str]:
 
 
 @st.cache_data(ttl=3600)
+def condutas_disponiveis() -> list[str]:
+    """Lista única de DESCR_CONDUTA normalizada para o filtro da sidebar.
+
+    Lê ``cubo_conduta.parquet`` gerado pelo pipeline. Devolve lista vazia
+    enquanto o arquivo não existir (modo amostra / Streamlit Cloud).
+    """
+    df = _safe_read(AGG / "cubo_conduta.parquet")
+    if df.empty or "DESCR_CONDUTA" not in df.columns:
+        return []
+    return sorted(df["DESCR_CONDUTA"].dropna().astype(str).unique().tolist())
+
+
+@st.cache_data(ttl=3600)
 def anos_disponiveis() -> list[int]:
     df = serie_estado()
     if df.empty:

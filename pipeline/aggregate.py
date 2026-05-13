@@ -17,6 +17,7 @@ Saída em data/aggregates/:
   por_setor.parquet       (ano, mes, natureza, sc_cod, pop_total, favela_2022, N)
   serie_estado.parquet    (ano, mes, natureza, N)
   cubo_natureza.parquet   (natureza, N)
+  cubo_conduta.parquet    (DESCR_CONDUTA, N)
 """
 from __future__ import annotations
 
@@ -73,7 +74,7 @@ def load_base() -> pd.DataFrame:
     log.info("Lendo base agregada: %s", path)
     cols = [
         "ANO", "MES", "NATUREZA_APURADA", "NOME_MUNICIPIO", "COD_IBGE",
-        "LATITUDE", "LONGITUDE", "COORDS_VALIDAS",
+        "LATITUDE", "LONGITUDE", "COORDS_VALIDAS", "DESCR_CONDUTA",
     ]
     partitioning = ds.partitioning(
         pa.schema([("ANO", pa.int32()), ("MES", pa.int32())]),
@@ -180,11 +181,18 @@ def main() -> None:
     after = df["NATUREZA_APURADA"].nunique(dropna=True)
     log.info("Naturezas: %d → %d categorias (após normalização)", before, after)
 
-    # ---- 1. Série estadual e cubo de natureza (não dependem de geo) ----
+    # ---- 1. Série estadual e cubos dimensionais (não dependem de geo) ----
     log.info("Agregando série estadual")
     agg_and_save(df, ["ANO", "MES", "NATUREZA_APURADA"], AGGREGATES / "serie_estado.parquet")
     log.info("Cubo de naturezas")
     agg_and_save(df, ["NATUREZA_APURADA"], AGGREGATES / "cubo_natureza.parquet")
+
+    log.info("Cubo de condutas")
+    if "DESCR_CONDUTA" in df.columns:
+        df["DESCR_CONDUTA"] = normalize_natureza(df["DESCR_CONDUTA"])
+        agg_and_save(df, ["DESCR_CONDUTA"], AGGREGATES / "cubo_conduta.parquet")
+    else:
+        log.warning("DESCR_CONDUTA não encontrada na base — cubo_conduta.parquet não gerado")
 
     # ---- 2. Por município (já vem COD_IBGE/NOME_MUNICIPIO no dado) ----
     log.info("Agregando por município")

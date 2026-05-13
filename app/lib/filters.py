@@ -53,6 +53,7 @@ MESES_PT = {
 SS_DATA_INI  = "flt_data_ini"
 SS_DATA_FIM  = "flt_data_fim"
 SS_NATUREZAS = "flt_naturezas"
+SS_CONDUTAS  = "flt_condutas"
 SS_RECORTE   = "flt_recorte"
 SS_DP        = "flt_dp"       # DpGeoDes selecionado (ou "Todos os DPs")
 
@@ -75,6 +76,7 @@ class GlobalFilters:
     data_ini: date
     data_fim: date
     naturezas: list[str]
+    condutas: list[str]
     recorte: str
     dp_cod: Optional[str] = None
     dp_des: Optional[str] = None
@@ -121,6 +123,11 @@ class GlobalFilters:
         if not self.naturezas:
             return pd.Series(True, index=df.index)
         return df["NATUREZA_APURADA"].isin(self.naturezas)
+
+    def mask_conduta(self, df: pd.DataFrame) -> pd.Series:
+        if not self.condutas or "DESCR_CONDUTA" not in df.columns:
+            return pd.Series(True, index=df.index)
+        return df["DESCR_CONDUTA"].isin(self.condutas)
 
     def mask_dp(self, df: pd.DataFrame) -> pd.Series:
         """Filtra por Delegacia (DP) — só age se ``dp_cod`` estiver setado.
@@ -208,7 +215,7 @@ def _echo_session_state() -> None:
     e o Streamlit passa a preservá-lo. Ver docs 1.28+:
     https://docs.streamlit.io/library/advanced-features/widget-behavior
     """
-    for k in (SS_DATA_INI, SS_DATA_FIM, SS_NATUREZAS, SS_RECORTE, SS_DP):
+    for k in (SS_DATA_INI, SS_DATA_FIM, SS_NATUREZAS, SS_CONDUTAS, SS_RECORTE, SS_DP):
         if k in st.session_state:
             st.session_state[k] = st.session_state[k]
 
@@ -278,6 +285,21 @@ def sidebar_filters(default_naturezas: Optional[list[str]] = None) -> GlobalFilt
              "está selecionada.**",
     )
 
+    # --- Conduta (multiselect) — persistida via key -----------------------
+    all_condutas = data.condutas_disponiveis()
+    if SS_CONDUTAS not in st.session_state:
+        st.session_state[SS_CONDUTAS] = []
+    st.session_state[SS_CONDUTAS] = [
+        c for c in st.session_state[SS_CONDUTAS] if c in all_condutas
+    ]
+    sel_condutas: list[str] = []
+    if all_condutas:
+        sel_condutas = st.sidebar.multiselect(
+            "Conduta (vazio = todas)", all_condutas,
+            key=SS_CONDUTAS,
+            help="Filtra por DESCR_CONDUTA. Vazio considera todas as condutas.",
+        )
+
     # --- Recorte (radio) — persistida via key -----------------------------
     if st.session_state.get(SS_RECORTE) not in RECORTES:
         st.session_state[SS_RECORTE] = RECORTES[0]
@@ -322,7 +344,7 @@ def sidebar_filters(default_naturezas: Optional[list[str]] = None) -> GlobalFilt
 
     return GlobalFilters(
         data_ini=data_ini, data_fim=data_fim,
-        naturezas=sel_nat, recorte=recorte,
+        naturezas=sel_nat, condutas=sel_condutas, recorte=recorte,
         dp_cod=dp_cod, dp_des=dp_des,
     )
 
