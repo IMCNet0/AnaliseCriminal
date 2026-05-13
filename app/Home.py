@@ -299,8 +299,12 @@ if tem_natureza and MODE in ("pontos", "hotspot"):
 
 if tem_natureza and MODE == "choropleth":
     recorte_choro = f.recorte  # só DP ou Setor (filtros.RECORTES enxuto)
-    loader, data_key = data.RECORTE_LOADER[recorte_choro]
-    df_rec = loader()
+    if f.condutas and recorte_choro == "Delegacia (DP)":
+        df_rec = data.por_dp_conduta_filtrado(f.condutas)
+        data_key = "DpGeoCod"
+    else:
+        loader, data_key = data.RECORTE_LOADER[recorte_choro]
+        df_rec = loader()
     if df_rec.empty:
         st.warning(
             f"Agregado de **{recorte_choro}** não encontrado. "
