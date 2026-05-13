@@ -409,6 +409,63 @@ def anos_disponiveis() -> list[int]:
     return sorted(df["ANO"].dropna().astype(int).unique().tolist())
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def serie_conduta() -> pd.DataFrame:
+    """Série Capital-level com dimensão DESCR_CONDUTA.
+
+    Colunas: ANO · MES · NATUREZA_APURADA · DESCR_CONDUTA · N
+    Gerado por ``pipeline/aggregate.py``. Devolve DataFrame vazio quando o
+    arquivo não existir (modo amostra sem base completa).
+    """
+    df = _safe_read(AGG / "serie_conduta.parquet")
+    if df.empty:
+        return df
+    if {"ANO", "MES"}.issubset(df.columns):
+        df["DATA"] = pd.to_datetime(
+            df["ANO"].astype("Int64").astype("string") + "-"
+            + df["MES"].astype("Int64").astype("string").str.zfill(2) + "-01",
+            errors="coerce",
+        )
+    return df
+
+
+def serie_contextual_conduta(
+    dp_cod: Optional[str],
+    condutas: list[str],
+) -> pd.DataFrame:
+    """Série temporal filtrada por condutas (ANO × MES × NATUREZA × N).
+
+    Usa ``serie_conduta.parquet`` (Capital-level). Quando ``dp_cod`` está
+    definido, o filtro por DP não é aplicado — retorna dados da Capital
+    inteira filtrados por conduta (degradação informada via log).
+
+    Retorna DataFrame com o mesmo esquema de ``serie_contextual`` para que
+    os chamadores possam trocar uma chamada pela outra sem alterações de
+    código além do filtro.
+    """
+    df = serie_conduta()
+    if df.empty:
+        return df
+    if condutas:
+        df = df[df["DESCR_CONDUTA"].isin(condutas)]
+    if dp_cod:
+        import logging
+        logging.getLogger(__name__).warning(
+            "serie_contextual_conduta: dp_cod=%s ignorado (serie_conduta não "
+            "tem DpGeoCod — use por_dp_conduta quando disponível)", dp_cod
+        )
+    out = (
+        df.groupby(["ANO", "MES", "NATUREZA_APURADA"], as_index=False, observed=True)["N"]
+        .sum()
+    )
+    out["DATA"] = pd.to_datetime(
+        out["ANO"].astype("Int64").astype("string") + "-"
+        + out["MES"].astype("Int64").astype("string").str.zfill(2) + "-01",
+        errors="coerce",
+    )
+    return out
+
+
 def _norm_natureza(s: pd.Series) -> pd.Series:
     """Mesma normalização aplicada em ``pipeline/aggregate.py``.
 

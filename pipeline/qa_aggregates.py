@@ -43,6 +43,7 @@ EXPECTED_FILES = {
     "serie_estado":     ["ANO", "MES", "NATUREZA_APURADA", "N"],
     "cubo_natureza":    ["NATUREZA_APURADA", "N"],
     "cubo_conduta":     ["DESCR_CONDUTA", "N"],
+    "serie_conduta":    ["ANO", "MES", "NATUREZA_APURADA", "DESCR_CONDUTA", "N"],
     "por_municipio":    ["ANO", "MES", "NATUREZA_APURADA", "CD_MUN", "NM_MUN", "N"],
     "por_batalhao":     ["ANO", "MES", "NATUREZA_APURADA", "OPM_BTL", "cmdo_BTL", "N"],
     "por_companhia":    ["ANO", "MES", "NATUREZA_APURADA", "OPMCOD_CIA", "OPM_CIA", "btl_CIA", "populacao_CIA", "N"],

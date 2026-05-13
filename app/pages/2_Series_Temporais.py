@@ -127,7 +127,11 @@ sidebar_footer()
 
 # serie_contextual troca serie_estado por por_dp-filtrado quando uma DP
 # está selecionada na sidebar — top 5, STL e previsão passam a ser da DP.
-serie = data.serie_contextual(f.dp_cod)
+serie = (
+    data.serie_contextual_conduta(f.dp_cod, f.condutas)
+    if f.condutas else
+    data.serie_contextual(f.dp_cod)
+)
 if serie.empty:
     if f.dp_cod:
         st.info(

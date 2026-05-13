@@ -53,7 +53,11 @@ sidebar_footer()
 # Quando o usuário escolhe uma DP na sidebar, `serie_contextual` troca
 # transparentemente a série estadual por por_dp filtrado → os KPIs,
 # gráficos e gauges passam a refletir somente aquela delegacia.
-serie = data.serie_contextual(f.dp_cod)
+serie = (
+    data.serie_contextual_conduta(f.dp_cod, f.condutas)
+    if f.condutas else
+    data.serie_contextual(f.dp_cod)
+)
 if serie.empty:
     if f.dp_cod:
         st.info(

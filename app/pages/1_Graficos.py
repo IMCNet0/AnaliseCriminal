@@ -32,7 +32,11 @@ sidebar_footer()
 # Quando uma DP está selecionada, serie_contextual substitui a série
 # estadual por por_dp filtrado — gauges/evolução/ranking passam a refletir
 # apenas aquela delegacia. None = estadual (default).
-serie = data.serie_contextual(f.dp_cod)
+serie = (
+    data.serie_contextual_conduta(f.dp_cod, f.condutas)
+    if f.condutas else
+    data.serie_contextual(f.dp_cod)
+)
 if serie.empty:
     if f.dp_cod:
         st.info(

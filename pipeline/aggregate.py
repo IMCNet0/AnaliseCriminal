@@ -191,8 +191,13 @@ def main() -> None:
     if "DESCR_CONDUTA" in df.columns:
         df["DESCR_CONDUTA"] = normalize_natureza(df["DESCR_CONDUTA"])
         agg_and_save(df, ["DESCR_CONDUTA"], AGGREGATES / "cubo_conduta.parquet")
+        log.info("Série conduta (ANO×MES×NATUREZA×DESCR_CONDUTA)")
+        agg_and_save(
+            df, ["ANO", "MES", "NATUREZA_APURADA", "DESCR_CONDUTA"],
+            AGGREGATES / "serie_conduta.parquet",
+        )
     else:
-        log.warning("DESCR_CONDUTA não encontrada na base — cubo_conduta.parquet não gerado")
+        log.warning("DESCR_CONDUTA não encontrada na base — cubo_conduta e serie_conduta não gerados")
 
     # ---- 2. Por município (já vem COD_IBGE/NOME_MUNICIPIO no dado) ----
     log.info("Agregando por município")
