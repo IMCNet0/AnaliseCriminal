@@ -42,7 +42,11 @@ def _get_api_key(name: str) -> str:
 
 def gather(f: GlobalFilters) -> dict:
     """Coleta todos os dados necessários para o relatório com os filtros de f."""
-    serie = _data.serie_contextual(f.dp_cod)
+    serie = (
+        _data.serie_contextual_conduta(f.dp_cod, f.condutas)
+        if f.condutas else
+        _data.serie_contextual(f.dp_cod)
+    )
     if serie.empty:
         serie_f = pd.DataFrame()
     else:
