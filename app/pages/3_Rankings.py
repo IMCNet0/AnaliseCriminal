@@ -49,11 +49,20 @@ recorte_rank = st.selectbox(
     help="Apenas Delegacia (DP) e Setor Censitário estão disponíveis nesta visão.",
 )
 
-loader, data_key = data.RECORTE_LOADER[recorte_rank]
-df = loader()
-if df.empty:
-    st.info("Agregados ainda não gerados. Rode `python pipeline/run_all.py`.")
-    st.stop()
+if f.condutas and recorte_rank == "Delegacia (DP)":
+    df = data.por_dp_conduta_filtrado(f.condutas)
+    data_key = "DpGeoCod"
+    if df.empty:
+        st.info("Sem dados para as condutas selecionadas. Verifique o filtro ou rode `python pipeline/run_all.py`.")
+        st.stop()
+else:
+    loader, data_key = data.RECORTE_LOADER[recorte_rank]
+    df = loader()
+    if df.empty:
+        st.info("Agregados ainda não gerados. Rode `python pipeline/run_all.py`.")
+        st.stop()
+    if f.condutas and recorte_rank == "Setor Censitário":
+        st.caption("ℹ️ Filtro Conduta não disponível para Setor Censitário — exibindo todos.")
 
 
 # ---------------------------------------------------------------------------

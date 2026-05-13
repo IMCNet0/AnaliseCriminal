@@ -18,6 +18,8 @@ Saída em data/aggregates/:
   serie_estado.parquet    (ano, mes, natureza, N)
   cubo_natureza.parquet   (natureza, N)
   cubo_conduta.parquet    (DESCR_CONDUTA, N)
+  serie_conduta.parquet   (ANO, MES, NATUREZA_APURADA, DESCR_CONDUTA, N)
+  por_dp_conduta.parquet  (ANO, MES, NATUREZA_APURADA, DpGeoCod, DpGeoDes, DESCR_CONDUTA, N)
 """
 from __future__ import annotations
 
@@ -233,6 +235,15 @@ def main() -> None:
         elif name == "dp":
             by = ["ANO", "MES", "NATUREZA_APURADA", "DpGeoCod", "DpGeoDes"]
             out = AGGREGATES / "por_dp.parquet"
+            agg_and_save(joined, by, out)
+            # Variante com DESCR_CONDUTA para o filtro de conduta em Rankings
+            if "DESCR_CONDUTA" in joined.columns:
+                by_c = by + ["DESCR_CONDUTA"]
+                agg_and_save(
+                    joined.dropna(subset=["DESCR_CONDUTA"]), by_c,
+                    AGGREGATES / "por_dp_conduta.parquet",
+                )
+            continue  # já salvou — pula o agg_and_save genérico abaixo
         else:  # setor
             # Agrega população por setor (soma pop_fem + pop_masc)
             pop = None

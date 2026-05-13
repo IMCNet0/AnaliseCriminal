@@ -410,6 +410,36 @@ def anos_disponiveis() -> list[int]:
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
+def por_dp_conduta() -> pd.DataFrame:
+    """Agregado por DP com dimensão DESCR_CONDUTA — restrito a SP-Capital.
+
+    Colunas: ANO · MES · NATUREZA_APURADA · DpGeoCod · DpGeoDes · DESCR_CONDUTA · N
+    Gerado por ``pipeline/aggregate.py``. Devolve DataFrame vazio se o arquivo
+    não existir (modo amostra / Streamlit Cloud).
+    """
+    df = _safe_read(AGG / "por_dp_conduta.parquet")
+    return _filter_sp_dp(df)
+
+
+def por_dp_conduta_filtrado(condutas: list[str]) -> pd.DataFrame:
+    """Retorna por_dp com condutas filtradas, agregando DESCR_CONDUTA para fora.
+
+    O resultado tem o mesmo schema de ``por_dp()`` (sem DESCR_CONDUTA), então
+    a página de Rankings usa sem alterações adicionais.
+    """
+    df = por_dp_conduta()
+    if df.empty:
+        return df
+    if condutas:
+        df = df[df["DESCR_CONDUTA"].isin(condutas)]
+    by = ["ANO", "MES", "NATUREZA_APURADA", "DpGeoCod", "DpGeoDes"]
+    by = [c for c in by if c in df.columns]
+    return (
+        df.groupby(by, as_index=False, observed=True, dropna=False)["N"].sum()
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
 def serie_conduta() -> pd.DataFrame:
     """Série Capital-level com dimensão DESCR_CONDUTA.
 
