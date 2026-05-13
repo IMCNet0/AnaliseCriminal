@@ -280,7 +280,8 @@ if tem_natureza and MODE in ("pontos", "hotspot"):
         m_end = f.data_fim.month if a == f.ano_fim else 12
         for m in range(m_start, m_end + 1):
             for nat in f.naturezas:
-                df_am = data.pontos(int(a), int(m), nat, dp_cod=f.dp_cod)
+                df_am = data.pontos(int(a), int(m), nat, dp_cod=f.dp_cod,
+                                    condutas=tuple(f.condutas))
                 if not df_am.empty:
                     frames.append(df_am)
     pts = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()

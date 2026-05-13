@@ -512,6 +512,7 @@ def _norm_natureza(s: pd.Series) -> pd.Series:
 @st.cache_data(show_spinner="Carregando pontos da partição…", ttl=600)
 def pontos(ano: int, mes: int, natureza: Optional[str] = None,
            dp_cod: Optional[str] = None,
+           condutas: tuple[str, ...] = (),
            max_rows: int = 50_000) -> pd.DataFrame:
     # Prefere a base completa (local dev) — resultados exatos por DP/natureza.
     # Cai na amostra quando a base completa não existe (Streamlit Cloud).
@@ -531,7 +532,8 @@ def pontos(ano: int, mes: int, natureza: Optional[str] = None,
     import pyarrow.parquet as pq
 
     WANT = ["LATITUDE", "LONGITUDE", "NATUREZA_APURADA",
-            "NOME_MUNICIPIO", "DATA_OCORRENCIA_BO", "COORDS_VALIDAS", "DpGeoCod"]
+            "NOME_MUNICIPIO", "DATA_OCORRENCIA_BO", "COORDS_VALIDAS", "DpGeoCod",
+            "DESCR_CONDUTA"]
     tables = []
     for pfile in parquet_files:
         pf = pq.ParquetFile(str(pfile))
@@ -565,6 +567,9 @@ def pontos(ano: int, mes: int, natureza: Optional[str] = None,
             df = df[norm_col == str(dp_cod).strip()].copy()
         else:
             df = _filter_pontos_by_dp(df, dp_cod)
+    if condutas and not df.empty and "DESCR_CONDUTA" in df.columns:
+        df["DESCR_CONDUTA"] = _norm_natureza(df["DESCR_CONDUTA"])
+        df = df[df["DESCR_CONDUTA"].isin(condutas)].copy()
     if len(df) > max_rows:
         df = df.sample(max_rows, random_state=42)
     return df
