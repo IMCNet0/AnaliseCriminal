@@ -285,20 +285,22 @@ def sidebar_filters(default_naturezas: Optional[list[str]] = None) -> GlobalFilt
              "está selecionada.**",
     )
 
-    # --- Conduta (multiselect) — persistida via key -----------------------
-    all_condutas = data.condutas_disponiveis()
-    if SS_CONDUTAS not in st.session_state:
-        st.session_state[SS_CONDUTAS] = []
-    st.session_state[SS_CONDUTAS] = [
-        c for c in st.session_state[SS_CONDUTAS] if c in all_condutas
-    ]
+    # --- Conduta (multiselect) — SUSPENSO: opções concatenadas, pendente ajuste
+    # TODO: normalizar DESCR_CONDUTA antes de reativar o widget
+    # all_condutas = data.condutas_disponiveis()
+    # if SS_CONDUTAS not in st.session_state:
+    #     st.session_state[SS_CONDUTAS] = []
+    # st.session_state[SS_CONDUTAS] = [
+    #     c for c in st.session_state[SS_CONDUTAS] if c in all_condutas
+    # ]
+    # sel_condutas: list[str] = []
+    # if all_condutas:
+    #     sel_condutas = st.sidebar.multiselect(
+    #         "Conduta (vazio = todas)", all_condutas,
+    #         key=SS_CONDUTAS,
+    #         help="Filtra por DESCR_CONDUTA. Vazio considera todas as condutas.",
+    #     )
     sel_condutas: list[str] = []
-    if all_condutas:
-        sel_condutas = st.sidebar.multiselect(
-            "Conduta (vazio = todas)", all_condutas,
-            key=SS_CONDUTAS,
-            help="Filtra por DESCR_CONDUTA. Vazio considera todas as condutas.",
-        )
 
     # --- Recorte (radio) — persistida via key -----------------------------
     if st.session_state.get(SS_RECORTE) not in RECORTES:
