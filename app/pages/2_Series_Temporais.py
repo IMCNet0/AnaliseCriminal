@@ -133,7 +133,9 @@ serie = (
     data.serie_contextual(f.dp_cod)
 )
 if serie.empty:
-    if f.dp_cod:
+    if f.condutas:
+        st.info("Sem dados para a combinação de Conduta + período selecionados.")
+    elif f.dp_cod:
         st.info(
             f"Sem dados para **{f.dp_des}**. Tente outra DP ou volte "
             f"pra **Todos os DPs** na sidebar."
@@ -341,6 +343,8 @@ if mhd.empty:
         "`python pipeline/aggregate_hora_dia.py` depois do `run_all.py` para gerá-lo."
     )
 else:
+    if f.condutas:
+        st.caption("ℹ️ Filtro Conduta não disponível nesta matriz — exibindo todas as condutas.")
     m_mask = f.mask_date(mhd) & f.mask_natureza(mhd) & f.mask_dp(mhd)
     mhd_f = mhd.loc[m_mask].copy()
 
@@ -428,6 +432,8 @@ if dm_raw.empty:
         "`python pipeline/aggregate_dia_mes.py` depois do `run_all.py` para gerá-lo."
     )
 else:
+    if f.condutas:
+        st.caption("ℹ️ Filtro Conduta não disponível nesta matriz — exibindo todas as condutas.")
     dm_mask = f.mask_date(dm_raw) & f.mask_natureza(dm_raw) & f.mask_dp(dm_raw)
     dm_f = dm_raw.loc[dm_mask].copy()
 

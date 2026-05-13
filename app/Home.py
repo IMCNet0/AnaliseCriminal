@@ -59,7 +59,9 @@ serie = (
     data.serie_contextual(f.dp_cod)
 )
 if serie.empty:
-    if f.dp_cod:
+    if f.condutas:
+        st.info("Sem dados para a combinação de Conduta + período selecionados.")
+    elif f.dp_cod:
         st.info(
             f"Sem dados para a delegacia **{f.dp_des}** no agregado "
             f"`por_dp.parquet`. Verifique se o pipeline foi rodado para o período."
